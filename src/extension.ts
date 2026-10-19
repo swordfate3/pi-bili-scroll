@@ -38,6 +38,7 @@ import {
 } from "./login.js";
 import { sendComment, type MentionTarget } from "./comment.js";
 import { readPersona } from "./persona.js";
+import { checkQuota, loadQuota, pruneState, quotaPath, recordComment, saveQuota } from "./quota.js";
 import { isDryRunArgs, isKnownCommand, isWriteCommand, runWhale, READ_COMMANDS, WRITE_COMMANDS } from "./whale.js";
 import { buildRunPrompt, effectiveKeywords } from "./prompt.js";
 import { waitForRound } from "./round.js";
@@ -463,13 +464,33 @@ export default function (pi: ExtensionAPI) {
       }
       const at: MentionTarget | null =
         params.atMid && params.atName ? { mid: String(params.atMid), name: String(params.atName) } : null;
+
+      // 限额闸：闸门（逐次确认）关掉之后，这是唯一还在防刷屏的东西。
+      // 判据是确定性的，超了就拒，不给例外。
+      const { config } = await loadConfig(pathsFor());
+      const now = new Date();
+      const quotaFile = quotaPath(pathsFor().home);
+      const limits = {
+        maxCommentsPerDay: config.maxCommentsPerDay,
+        minMinutesBetweenComments: config.minMinutesBetweenComments,
+        sameVideoCooldownDays: config.sameVideoCooldownDays,
+      };
+      const state = pruneState(await loadQuota(quotaFile), now);
+      const decision = checkQuota(state, params.bvid, now, limits);
+      if (!decision.allowed) {
+        return jsonResult({ ok: false, blockedBy: "quota", error: decision.reason, limits });
+      }
+
       const result = await sendComment({
         credential: { sessdata: credential.sessdata, bili_jct: credential.bili_jct, dedeuserid: credential.dedeuserid },
         bvid: params.bvid,
         text: params.text,
         at,
       });
-      return jsonResult({ ...result, at });
+      if (result.ok) {
+        await saveQuota(quotaFile, recordComment(state, params.bvid, now));
+      }
+      return jsonResult({ ...result, at, remainingToday: Math.max(0, (decision.remainingToday ?? 1) - 1) });
     },
   });
 

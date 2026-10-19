@@ -7,6 +7,22 @@
 > 设计取舍写在 [`DECISIONS.md`](./DECISIONS.md)，用法写在 [`README.md`](./README.md)，
 > 这里只回答一个问题：**这一版和上一版差在哪。**
 
+## [1.7.0] — 2026-10-19
+
+### 新增
+- **发评论限额闸**（`src/quota.ts`）：闸门去掉之后，这是唯一还在防"刷屏封号"的东西。
+  三条判据都是确定性代码，超了就拒、不给例外：
+  - `maxCommentsPerDay`（默认 3）
+  - `minMinutesBetweenComments`（默认 30）
+  - `sameVideoCooldownDays`（默认 7，与 whale 的口径一致）
+  状态落 `~/.local/share/bili-scroll/comment-quota.json`（原子写、权限 600、
+  只保留最近 30 天，避免文件无限长）。
+- `bili_comment` 返回里带 `remainingToday`，并在被拒时给出 `blockedBy: "quota"` 与具体原因。
+
+### 说明
+- 审批仍然默认关闭（v1.6.0）：发评论/私信/动态直接执行，只记 `writes.log` 审计。
+- 限额是**代码强制**，不靠模型自觉 —— 模型每次都会觉得"这条值得发"，所以判据必须外置。
+
 ## [1.6.0] — 2026-10-19
 
 ### 变更（行为反转）

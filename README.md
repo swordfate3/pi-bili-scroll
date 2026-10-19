@@ -167,6 +167,17 @@ node scripts/setup-mcp-write.mjs
 无论开关如何，**每次写操作都会记进 `~/.local/share/bili-scroll/writes.log`**
 （时间 / 工具 / 参数摘要），事后可查"它到底发了什么"。
 
+**发评论另有代码限额**（`src/quota.ts`，超了直接拒，不给例外）：
+
+| 配置项 | 默认 | 含义 |
+|---|---|---|
+| `maxCommentsPerDay` | 3 | 每天最多几条 |
+| `minMinutesBetweenComments` | 30 | 两条之间至少隔几分钟 |
+| `sameVideoCooldownDays` | 7 | 同一视频 N 天内只评一次 |
+
+状态在 `comment-quota.json`（原子写、600、只留 30 天）。要放宽就改数字——没有"临时豁免"接口，
+有例外口子就等于没有限额。
+
 ## 定时巡检（自己写的调度器）
 
 容器里**没有 cron / systemd**，所以这里带了一个常驻调度进程，行为照搬鲸鱼的生物钟：

@@ -34,6 +34,12 @@ export interface BiliScrollConfig {
    * 无论开关如何，每次写操作都会记进 `writes.log` 审计。
    */
   confirmWrites: boolean;
+  /** 每天最多发几条评论（代码强制，防刷屏封号） */
+  maxCommentsPerDay: number;
+  /** 两条评论之间至少隔几分钟 */
+  minMinutesBetweenComments: number;
+  /** 同一个视频 N 天内只评论一次 */
+  sameVideoCooldownDays: number;
 }
 
 export const DEFAULT_CONFIG: BiliScrollConfig = {
@@ -45,6 +51,9 @@ export const DEFAULT_CONFIG: BiliScrollConfig = {
   workdir: null,
   qrDir: "downloads",
   confirmWrites: false,
+  maxCommentsPerDay: 3,
+  minMinutesBetweenComments: 30,
+  sameVideoCooldownDays: 7,
 };
 
 const REPORT_DETAILS: readonly ReportDetail[] = ["full", "brief", "none"];
@@ -136,6 +145,16 @@ export function normalizeConfig(raw: unknown): { config: BiliScrollConfig; notic
       config.workdir = record.workdir.trim();
     } else {
       notices.push("workdir 不是非空字符串，已按「不读设定」处理。");
+    }
+  }
+
+  for (const key of ["maxCommentsPerDay", "minMinutesBetweenComments", "sameVideoCooldownDays"] as const) {
+    const value = record[key];
+    if (value === undefined) continue;
+    if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+      config[key] = value;
+    } else {
+      notices.push(`${key} 不是非负整数，已用默认值 ${DEFAULT_CONFIG[key]}。`);
     }
   }
 
