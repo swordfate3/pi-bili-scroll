@@ -45,6 +45,10 @@ export interface BiliScrollConfig {
    * 实测：容器 Etc/UTC，用户 UTC+8 ⇒ 20:00 窗口会在凌晨 4 点触发。
    */
   timezone: string;
+  /** 一轮巡检内普通读（搜/字幕/评论/元数据）的上限，防撞 B站 风控 */
+  maxReadsPerRound: number;
+  /** 一轮内"重读"（下载视频/抽帧）的上限 */
+  maxHeavyReadsPerRound: number;
 }
 
 export const DEFAULT_CONFIG: BiliScrollConfig = {
@@ -60,6 +64,8 @@ export const DEFAULT_CONFIG: BiliScrollConfig = {
   minMinutesBetweenComments: 30,
   sameVideoCooldownDays: 7,
   timezone: "Asia/Shanghai",
+  maxReadsPerRound: 10,
+  maxHeavyReadsPerRound: 2,
 };
 
 const REPORT_DETAILS: readonly ReportDetail[] = ["full", "brief", "none"];
@@ -154,7 +160,13 @@ export function normalizeConfig(raw: unknown): { config: BiliScrollConfig; notic
     }
   }
 
-  for (const key of ["maxCommentsPerDay", "minMinutesBetweenComments", "sameVideoCooldownDays"] as const) {
+  for (const key of [
+    "maxCommentsPerDay",
+    "minMinutesBetweenComments",
+    "sameVideoCooldownDays",
+    "maxReadsPerRound",
+    "maxHeavyReadsPerRound",
+  ] as const) {
     const value = record[key];
     if (value === undefined) continue;
     if (typeof value === "number" && Number.isInteger(value) && value >= 0) {

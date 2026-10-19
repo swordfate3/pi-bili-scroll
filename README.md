@@ -175,6 +175,16 @@ node scripts/setup-mcp-write.mjs
 | `minMinutesBetweenComments` | 30 | 两条之间至少隔几分钟 |
 | `sameVideoCooldownDays` | 7 | 同一视频 N 天内只评一次 |
 
+**读取也有上限**（同样写在代码里，见 `src/readlimit.ts`）：
+
+| 配置项 | 默认 | 含义 |
+|---|---|---|
+| `maxReadsPerRound` | 10 | 一轮内搜索/字幕/评论/元数据的次数上限 |
+| `maxHeavyReadsPerRound` | 2 | 一轮内 `watch-video`/`debrief`（下载+抽帧）次数上限 |
+
+为什么读也要限：2026-10-19 实测，一天内 100+ 次读取就撞了 B站 **412 风控**，
+而那个只读服务器会把 412 误报成"无效响应"——很难看出是限流。
+
 状态在 `comment-quota.json`（原子写、600、只留 30 天）。要放宽就改数字——没有"临时豁免"接口，
 有例外口子就等于没有限额。
 

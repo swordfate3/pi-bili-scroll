@@ -39,6 +39,7 @@ import {
 import { sendComment, type MentionTarget } from "./comment.js";
 import { readPersona } from "./persona.js";
 import { checkQuota, loadQuota, pruneState, quotaPath, recordComment, saveQuota } from "./quota.js";
+import { classifyRead, checkRead, EMPTY_COUNTER, DEFAULT_READ_LIMITS, type ReadCounter } from "./readlimit.js";
 import { isDryRunArgs, isKnownCommand, isWriteCommand, runWhale, READ_COMMANDS, WRITE_COMMANDS } from "./whale.js";
 import { buildRunPrompt, effectiveKeywords } from "./prompt.js";
 import { waitForRound } from "./round.js";
@@ -107,6 +108,12 @@ async function statusText(): Promise<string> {
   for (const notice of snap.notices) lines.push(`⚠️ ${notice}`);
   return lines.join("\n");
 }
+
+/**
+ * 本轮已读次数。`/bili-scroll` 开始时清零 —— 一轮就是一轮。
+ * 交互式会话里没跑过巡检时从会话开始累计，宁可早停。
+ */
+let readCounter: ReadCounter = { ...EMPTY_COUNTER };
 
 /** 当前进行中的扫码登录（同一时刻只允许一个）。 */
 interface ActiveLogin extends QrSession {
@@ -247,6 +254,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
+      readCounter = { ...EMPTY_COUNTER }; // 新一轮：读取额度重置
       const snap = await snapshot();
       if (!snap.config.enabled) {
         say(ctx, "扩展已关闭（config.enabled=false）。要跑就在配置里打开，或直接说一句让我手动刷一轮。", "warning");
@@ -671,9 +679,23 @@ export default function (pi: ExtensionAPI) {
       preview = findText(input)?.slice(0, 300) ?? "";
     }
 
-    if (!description) return;
+    if (description) {
+      await appendWriteAudit(description, preview);
+    }
 
-    await appendWriteAudit(description, preview);
+    // 读取限额：读太猛一样会撞 B站 412 风控（实测过），而模型每轮不会自己收敛。
+    const readKind = classifyRead(toolName, input);
+    if (readKind) {
+      const { config } = await loadConfig(pathsFor());
+      const decision = checkRead(readCounter, readKind, {
+        maxReadsPerRound: config.maxReadsPerRound ?? DEFAULT_READ_LIMITS.maxReadsPerRound,
+        maxHeavyReadsPerRound: config.maxHeavyReadsPerRound ?? DEFAULT_READ_LIMITS.maxHeavyReadsPerRound,
+      });
+      if (!decision.allowed) return { block: true, reason: decision.reason };
+      if (decision.next) readCounter = decision.next;
+    }
+
+    if (!description) return;
 
     const { config } = await loadConfig(pathsFor());
     if (!config.confirmWrites) return; // 默认：放行
