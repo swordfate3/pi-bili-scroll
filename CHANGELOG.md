@@ -7,6 +7,21 @@
 > 设计取舍写在 [`DECISIONS.md`](./DECISIONS.md)，用法写在 [`README.md`](./README.md)，
 > 这里只回答一个问题：**这一版和上一版差在哪。**
 
+## [1.4.0] — 2026-10-19
+
+### 新增
+- **自带调度守护进程**（`scripts/bili-daemon.mjs` + `/bili-daemon start|stop|status`）：
+  容器里没有 cron/systemd，所以自己写循环。行为照搬鲸鱼的生物钟——窗口内**随机**时刻、
+  `skipChance` 概率"今天不想看"、计划落盘重启不丢、过点一小时没报告则**补跑**。
+  到点执行 `pi -p "按 bili-scroll 判据刷一轮"`（detached，不阻塞）。
+- **Telegram 推送**：`scripts/schedule-core.mjs` 的 `notifyTelegram()` 走 Bot API；
+  token 与 chatId 写在 `~/.local/share/bili-scroll/notify.json`（不进仓库），未配置时静默跳过。
+- 调度纯逻辑单独成文件（`schedule-core.mjs`）：`parseHHMM` / `windowRange` / `planToday` /
+  `shouldRun` / `needsCatchUp`，注入 `rng` 与 `now` 便于测试。
+
+### 说明
+- **容器重启后守护进程会丢**，需重新 `/bili-daemon start` —— 环境没有 init 系统，不是实现缺陷。
+
 ## [1.3.0] — 2026-10-19
 
 ### 新增

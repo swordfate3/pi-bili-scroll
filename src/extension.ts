@@ -5,8 +5,15 @@
  * **不在工厂里做任何 IO / 起进程 / 定时器**（Pi 有些调用只加载扩展而不开会话），
  * 也不持有需要清理的长期资源 —— 配置与资料都是按需读，读完即弃。
  */
+import { spawn } from "node:child_process";
+import { readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { stat } from "node:fs/promises";
+import { dirname as pathDirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { isAbsolute, join, resolve } from "node:path";
+
+/** 包根（src/ 的上一级），用于定位 scripts/ 下的调度器。 */
+const PACKAGE_ROOT_HINT = join(pathDirname(fileURLToPath(import.meta.url)), "..");
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -144,6 +151,34 @@ export function isWriteInvocation(toolName: string, input: unknown): boolean {
     return JSON.stringify(input ?? {}).includes(WRITE_TOOL_MARKER);
   } catch {
     return false;
+  }
+}
+
+
+/** 调度守护进程（替代容器里不存在的 cron）。 */
+const DAEMON_SCRIPT = join(PACKAGE_ROOT_HINT, "scripts", "bili-daemon.mjs");
+
+function daemonPidFile(home: string): string {
+  return join(home, "daemon.pid");
+}
+
+function isAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readDaemonPid(home: string): number | null {
+  try {
+    const raw = readFileSync(daemonPidFile(home), "utf8").trim();
+    const pid = Number(raw);
+    return Number.isInteger(pid) ? pid : null;
+  } catch {
+    return null;
   }
 }
 
@@ -292,6 +327,96 @@ export default function (pi: ExtensionAPI) {
         write: isWriteCommand(command),
       };
       return jsonResult(details);
+    },
+  });
+
+
+  pi.registerCommand("bili-daemon", {
+    description:
+      "定时巡检守护进程（容器里没有 cron）：/bili-daemon [start|stop|status]（默认 status）。到点自动跑一轮并把结果推 Telegram。",
+    async handler(args: string, ctx: ExtensionCommandContext) {
+      const action = (args.trim().split(/\s+/)[0] || "status").toLowerCase();
+      const snap = await snapshot();
+      const home = snap.paths.home;
+      const pidFile = daemonPidFile(home);
+      const pid = readDaemonPid(home);
+
+      if (action === "start") {
+        if (pid && isAlive(pid)) {
+          say(ctx, `守护进程已在运行（pid=${pid}）。`);
+          return;
+        }
+        mkdirSync(home, { recursive: true });
+        const child = spawn(process.execPath, [DAEMON_SCRIPT], {
+          detached: true,
+          stdio: ["ignore", "ignore", "ignore"],
+          env: { ...process.env, BILI_SCROLL_HOME: home },
+        });
+        child.unref();
+        if (child.pid) writeFileSync(pidFile, `${child.pid}\n`);
+        await new Promise((r) => setTimeout(r, 1200));
+        const ok = child.pid ? isAlive(child.pid) : false;
+        say(
+          ctx,
+          ok
+            ? [
+                `✅ 守护进程已启动（pid=${child.pid}）`,
+                `日志：${join(home, "daemon.log")}`,
+                `状态：/bili-daemon status　停止：/bili-daemon stop`,
+                "⚠️ 容器重启后进程会丢失，需要重新 start（这是环境限制，不是 cron）",
+              ].join("\n")
+            : `❌ 启动失败，看一眼日志：${join(home, "daemon.log")}`,
+          ok ? "info" : "error",
+        );
+        return;
+      }
+
+      if (action === "stop") {
+        if (!pid || !isAlive(pid)) {
+          rmSync(pidFile, { force: true });
+          say(ctx, "没有在运行的守护进程。");
+          return;
+        }
+        try {
+          process.kill(pid, "SIGTERM");
+          rmSync(pidFile, { force: true });
+          say(ctx, `已停止（pid=${pid}）。`);
+        } catch (error) {
+          say(ctx, `停止失败：${error instanceof Error ? error.message : String(error)}`, "error");
+        }
+        return;
+      }
+
+      if (action !== "status") {
+        say(ctx, `不认识的动作「${action}」。可用：start / stop / status。`, "warning");
+        return;
+      }
+
+      let state = "(无)";
+      try {
+        const raw = JSON.parse(readFileSync(join(home, "schedule-state.json"), "utf8")) as Record<string, unknown>;
+        state = JSON.stringify(raw);
+      } catch {
+        // 还没做过计划
+      }
+      let schedule = "(用默认：20:00-22:00，skipChance 0.3)";
+      try {
+        schedule = readFileSync(join(home, "schedule.json"), "utf8").replace(/\s+/g, " ").trim();
+      } catch {
+        // 没有配置文件
+      }
+      say(
+        ctx,
+        [
+          `守护进程：${pid && isAlive(pid) ? `运行中（pid=${pid}）` : "未运行"}`,
+          `今日计划：${state}`,
+          `调度配置：${schedule}`,
+          `今日报告：${snap.ranToday ? snap.report : "还没有"}`,
+          `日志：${join(home, "daemon.log")}`,
+          "",
+          "启动：/bili-daemon start",
+        ].join("\n"),
+      );
     },
   });
 

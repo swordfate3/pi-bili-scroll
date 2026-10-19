@@ -167,6 +167,49 @@ node scripts/setup-mcp-write.mjs
 2. 扩展里的 `tool_call` 钩子——真正发出前**必须用户在弹窗里确认**；无 UI 模式（print/JSON）
    **一律拒绝**（fail closed），不会因为"没有界面"就默许。
 
+## 定时巡检（自己写的调度器）
+
+容器里**没有 cron / systemd**，所以这里带了一个常驻调度进程，行为照搬鲸鱼的生物钟：
+
+```bash
+/bili-daemon start      # 拉起守护进程
+/bili-daemon status     # 看进程、今日计划、报告、日志
+/bili-daemon stop
+```
+
+- **窗口内随机时刻**（不是固定点），配置在 `~/.local/share/bili-scroll/schedule.json`
+- **`skipChance`**：每次做计划独立掷骰子，0.3 表示 30% 概率"今天不想看"
+- **计划落盘**（`schedule-state.json`），进程重启不会重复跑
+- **补跑**：过了计划时刻一小时、今天仍没报告 → 补一次
+- 到点执行 `pi -p "按 bili-scroll 判据刷一轮"`（detached，不阻塞循环）
+
+⚠️ **容器重启后进程会丢**，需要重新 `/bili-daemon start` —— 这是没有 init 系统的环境限制。
+
+```json
+// ~/.local/share/bili-scroll/schedule.json
+{
+  "enabled": true,
+  "windows": [{ "start": "20:00", "end": "22:00", "wakes": 1 }],
+  "skipChance": 0.3,
+  "maxWakesPerDay": 2,
+  "tickSeconds": 60,
+  "catchUp": true,
+  "command": ["pi", "-p", "按 bili-scroll 判据刷一轮"]
+}
+```
+
+### 推送到 Telegram
+
+到点触发后会把摘要推给你。**token 不进仓库**，写在本地：
+
+```json
+// ~/.local/share/bili-scroll/notify.json  （建议 chmod 600）
+{ "telegram": { "token": "<bot token>", "chatId": "<你的 chat id>" } }
+```
+
+没配置时静默跳过，不会报错。`chatId` 的拿法：先和 bot 说句话，再
+`curl "https://api.telegram.org/bot<token>/getUpdates"` 找 `message.chat.id`。
+
 ## 全功能工具集（vendor 自 dsh-bili-whale）
 
 除了上面的巡检命令行，本包还 vendor 了
