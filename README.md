@@ -118,29 +118,19 @@ npm install --save-exact @xzxzzx/bilibili-mcp@1.14.3 --ignore-scripts
 
 ### 人设（角色）
 
-角色有**两个入口、一份文本**：
-
-| 入口 | 用法 | 作用范围 |
-|---|---|---|
-| pi prompt 模板 `/bili` | 敲 `/bili 看看 BV1xxx 值不值得看` | 当前会话，按角色回答 |
-| 巡检自动注入 | `/bili-scroll` 自动带上 | 只影响那一轮 |
-
-文本放在 **pi 的标准位置**：`~/.pi/agent/prompts/bili.md`（带 frontmatter，同时是 `/bili` 命令）。
-扩展通过软链读同一份：
+人设**只有一个人口**：巡检那一轮自动注入。文本在插件数据目录里：
 
 ```
-~/.local/share/bili-scroll/persona/AGENTS.md  →  ~/.pi/agent/prompts/bili.md
+~/.local/share/bili-scroll/persona/AGENTS.md     ← config.workdir 指向的目录
 config.json: { "workdir": "/home/node/.local/share/bili-scroll/persona" }
 ```
 
-**改那一份，两个入口同时生效**，不用动代码、不用重装。扩展读的时候会自动剥掉
-YAML frontmatter（那是给命令补全看的，不该进提示词正文）。
+扩展会把这份文件读进来**内联**进提示词（不是只给路径 —— 只给路径等于赌模型会不会去看）。
+它决定日报的立场与语气：默认不信标题、优先一手、有保留就直说。
 
-**扩展会把这份文件读进来内联**，不是只把路径丢给模型 —— 只给路径等于赌模型会不会去看，
-实测常被忽略（设了人设但语气没变就是这个原因）。文件超过 16 KB 会截断并如实标注。
-
-包内自带一份可直接用的初版角色（B 站内容编辑：默认不信标题、优先一手、宁可少一条）。
-想调语气就改这个文件，**不用动代码、不用重装**。
+> 早期版本还有过一个 `/bili` prompt 模板，敲一下就能让当前会话进入同一角色。
+> **已移除**：它和 `SKILL.md` 是两份独立文本，改一处容易忘另一处，实际变成过期的第二真源。
+> 需要"按编辑视角看一条视频"时，直接说，或跑 `/bili-scroll`。
 
 字段类型不对时**逐字段回退到默认值**并在提示里说明，不会因为一个坏字段整体失效。
 

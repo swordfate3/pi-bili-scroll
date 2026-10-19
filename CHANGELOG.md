@@ -7,6 +7,22 @@
 > 设计取舍写在 [`DECISIONS.md`](./DECISIONS.md)，用法写在 [`README.md`](./README.md)，
 > 这里只回答一个问题：**这一版和上一版差在哪。**
 
+## [2.1.0] — 2026-10-19
+
+### 移除
+- **`/bili` prompt 模板**。它和 `SKILL.md` 是两份独立文本，各自演化后开始互相矛盾：
+  模板里还写着"用 `mcp` 的 `search_bilibili_videos`"（实际已改为优先 `bili_whale`），
+  也完全不知道有口味系统和读取限额 —— 变成了**过期的第二真源**。
+- 人设只保留**一个入口**：巡检那一轮由 `config.workdir` 内联注入。
+  人设文本从"软链到 prompt 模板"改成插件数据目录里的独立文件，不再受模板生命周期影响。
+
+### 说明
+- 角色内容没有丢：立场、语气、硬规矩、反面例子都在
+  `~/.local/share/bili-scroll/persona/AGENTS.md`；同时把「怎么做」一节更新为当前实际
+  （工具优先级 `bili_whale` → `mcp` 兜底、`UPSTREAM_RESPONSE_INVALID` 要等一会重试、单轮读取上限、
+  每条都要 `bili_taste_record` 且 `source` 必填）。
+- 需要"按编辑视角临时看一条视频"时，直接说即可，不必再换命令。
+
 ## [2.0.1] — 2026-10-19
 
 ### 修复
