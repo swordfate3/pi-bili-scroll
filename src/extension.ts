@@ -36,6 +36,7 @@ import {
   writeCredential,
   type QrSession,
 } from "./login.js";
+import { sendComment, type MentionTarget } from "./comment.js";
 import { readPersona } from "./persona.js";
 import { isKnownCommand, isWriteCommand, runWhale, READ_COMMANDS, WRITE_COMMANDS } from "./whale.js";
 import { buildRunPrompt, effectiveKeywords } from "./prompt.js";
@@ -145,6 +146,7 @@ export function findText(value: unknown, depth = 0): string | null {
  * 也可能直接以命名空间工具出现，所以两者都认：工具名命中，或参数里出现该标记。
  */
 export function isWriteInvocation(toolName: string, input: unknown): boolean {
+  if (toolName === "bili_comment") return true; // 本扩展自己的发评论工具
   if (toolName === WRITE_TOOL_MARKER || toolName.endsWith(`__${WRITE_TOOL_MARKER}`)) return true;
   if (toolName !== "mcp" && !toolName.startsWith("mcp__")) return false;
   try {
@@ -417,6 +419,39 @@ export default function (pi: ExtensionAPI) {
           "启动：/bili-daemon start",
         ].join("\n"),
       );
+    },
+  });
+
+
+  pi.registerTool({
+    name: "bili_comment",
+    label: "发B站评论（支持真@）",
+    description:
+      "在 B 站视频下发一条评论，可选**真 @ 一个人**（会在对方的提及消息里出现）。需要已登录。给 atMid+atName 才会真 @；只写文本里的 @名字 不会通知任何人。写操作，执行前需用户确认。",
+    promptSnippet: "bili_comment: 发 B 站评论，可选真 @（要 mid+昵称）",
+    parameters: Type.Object(
+      {
+        bvid: Type.String({ maxLength: 32 }),
+        text: Type.String({ maxLength: 1000 }),
+        atMid: Type.Optional(Type.String({ maxLength: 32 })),
+        atName: Type.Optional(Type.String({ maxLength: 64 })),
+      },
+      { additionalProperties: false },
+    ),
+    async execute(_id, params) {
+      const credential = await readExistingCredential();
+      if (!credential) {
+        return jsonResult({ ok: false, error: "还没有 B 站凭证，先 /bili-login 扫码登录" });
+      }
+      const at: MentionTarget | null =
+        params.atMid && params.atName ? { mid: String(params.atMid), name: String(params.atName) } : null;
+      const result = await sendComment({
+        credential: { sessdata: credential.sessdata, bili_jct: credential.bili_jct, dedeuserid: credential.dedeuserid },
+        bvid: params.bvid,
+        text: params.text,
+        at,
+      });
+      return jsonResult({ ...result, at });
     },
   });
 
