@@ -87,7 +87,10 @@ export function checkQuota(
   const lastAt = state.days?.[today]?.lastAt;
   if (lastAt) {
     const gapMin = (now.getTime() - new Date(lastAt).getTime()) / 60000;
-    if (Number.isFinite(gapMin) && gapMin < limits.minMinutesBetweenComments) {
+    // 负值 = 记录时间在未来。实测踩过：补记历史评论时写了个晚于当前的时间戳，
+    // 于是算出"距上条只过了 -13 分钟"。这种情况说明记录不可信（时钟被改/写错），
+    // 不能据此拒绝，否则会一直卡死；放行并由调用方去修正数据。
+    if (Number.isFinite(gapMin) && gapMin >= 0 && gapMin < limits.minMinutesBetweenComments) {
       return {
         allowed: false,
         reason:
@@ -101,7 +104,7 @@ export function checkQuota(
   const lastForVideo = state.perVideo?.[bvid];
   if (lastForVideo) {
     const days = (now.getTime() - new Date(lastForVideo).getTime()) / 86400000;
-    if (Number.isFinite(days) && days < limits.sameVideoCooldownDays) {
+    if (Number.isFinite(days) && days >= 0 && days < limits.sameVideoCooldownDays) {
       return {
         allowed: false,
         reason:

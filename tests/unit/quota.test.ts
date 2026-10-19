@@ -104,3 +104,15 @@ test("loadQuota 对缺失/破损文件返回空状态", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("记录时间在未来（时钟被改/写错）时不据此拒绝", () => {
+  // 实测踩过：补记历史评论写了个晚于当前的时间戳，算出"距上条只过了 -13 分钟"，
+  // 结果一直卡在拒绝状态。负时间差说明记录不可信，应放行而不是卡死。
+  const future = new Date(now.getTime() + 60 * 60_000);
+  const state = {
+    days: { "2026-10-19": { count: 1, lastAt: future.toISOString() } },
+    perVideo: { BV1aa: future.toISOString() },
+  };
+  assert.equal(checkQuota(state, "BV1bb", now).allowed, true, "间隔判据不该被未来时间卡住");
+  assert.equal(checkQuota(state, "BV1aa", now).allowed, true, "冷却判据同样");
+});
