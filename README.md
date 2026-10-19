@@ -120,11 +120,33 @@ npm install --save-exact @xzxzzx/bilibili-mcp@1.14.3 --ignore-scripts
 
 家目录可用环境变量 `BILI_SCROLL_HOME` 覆盖（测试与非默认部署用）。
 
+## 写能力（发评论）
+
+除了只读的 `@xzxzzx/bilibili-mcp`，本包还 vendor 了
+[AGI_Ananas/bilibili-mcp](https://github.com/adoresever/bilibili-mcp)（MIT）作为第二个 MCP 服务器，
+但**用白名单只放出 `bili_reply` 一个工具**（发评论/回复楼中楼）——那份实现原本有 27 个工具，
+包含投稿、私信、发动态，全部挡在名单外：名单外的工具**连名字都不出现在 `list_tools` 里**。
+
+准备它（一次性）：
+
+```bash
+node scripts/setup-mcp-write.mjs
+```
+
+会在 `~/.local/share/bili-scroll/mcp-write/` 建独立 venv 并装依赖（`mcp` 锁 `<2`）。
+
+**两道闸**：
+
+1. 白名单（上面那条）——模型看不到也用不了其他写工具；
+2. 扩展里的 `tool_call` 钩子——真正发出前**必须用户在弹窗里确认**；无 UI 模式（print/JSON）
+   **一律拒绝**（fail closed），不会因为"没有界面"就默许。
+
 ## 它不做什么
 
 | 不做 | 原因 |
 |---|---|
-| **发评论 / 私信 / 投稿**（即"刷完 @ 我一下"） | 这一版用的 `@xzxzzx/bilibili-mcp` 是 **read-first** 设计，没有写能力。要 @ 得换那个含写操作、但没有发行版的实现，属另一版 |
+| 自动发评论（"刷完 @ 我一下"） | 能发，但**必须你点头**：发评论拿你的号公开发布、不可撤回，所以不做成一键自动 |
+| 私信 / 投稿 / 发动态 | vendored 那份有这些工具，但白名单没放。要放开需自己改 `BILI_MCP_TOOLS` 并承担风险 |
 | **到点自动刷** | Pi 是按次启动的 CLI/TUI，不是常驻服务 —— 没有常驻进程就没有定时器。要真自动，得起外部 cron 跑 `pi -p "按 bili-scroll 判据刷一轮"` |
 | **设置面板 UI** | Pi 没有 DSH 那种 web 设置页，配置走上面的 JSON |
 

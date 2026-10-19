@@ -37,8 +37,9 @@ npm run check      # typecheck + 28 个测试，必须全绿
 
 ## 边界（改动前先确认没有越界）
 
-- **只读**：所用 MCP 服务器是 read-first，12 个工具全部只读，没有发评论/私信/上传。
-  「刷完 @ 你」不属本版，要做得换实现，见 `DECISIONS.md` 2。
+- **默认只读**：读服务器 12 个工具全只读。另有一个写服务器（vendor 自 AGI_Ananas，MIT），
+  但 `BILI_MCP_TOOLS` 白名单只放 `bili_reply`，且扩展的 `tool_call` 钩子要求用户弹窗确认、
+  无 UI 模式一律拒绝。**不要为了"方便"扩大白名单**，见 `DECISIONS.md` 18/19。
 - **不常驻、不定时**：Pi 是按次启动的，定时只能靠外部 cron，见 `DECISIONS.md` 6。
 - **不自动跑**：`session_start` 只提示，绝不自动发起模型轮次，见 `DECISIONS.md` 7。
 - 登录相关（申请二维码、轮询、写凭证、删二维码）都在 `src/login.ts`；它**自己走官方扫码接口**，

@@ -77,6 +77,41 @@ test("包清单把命令、skill 与自带 MCP 声明都指向真实文件", asy
   assert.ok(entry.includes("/.local/share/bili-scroll/mcp/"), `入口应在持久卷的家目录下，实际：${entry}`);
 });
 
+test("写能力服务器：vendor 的 Python 实现 + 白名单只放 bili_reply", async () => {
+  const packagePath = join(dirname(fileURLToPath(import.meta.url)), "../..");
+  const mcp = JSON.parse(
+    await (await import("node:fs/promises")).readFile(join(packagePath, "mcp.json"), "utf8"),
+  ) as {
+    mcpServers?: Record<
+      string,
+      { command?: string; args?: string[]; env?: Record<string, string>; enabled?: boolean }
+    >;
+  };
+  const write = mcp.mcpServers?.["bilibili-write"];
+  assert.ok(write, "mcp.json 必须声明 bilibili-write 服务器");
+
+  // 必须是「venv 里的 python + 持久卷上的脚本」这种稳定绝对路径，
+  // 因为 vendored 脚本随包安装位置变化，不能指向包内相对路径。
+  assert.ok(write?.command?.startsWith("/"), `command 必须是绝对路径，实际：${write?.command}`);
+  assert.ok(write?.command?.endsWith("/venv/bin/python"), `command 应指向 venv python，实际：${write?.command}`);
+  assert.ok(
+    write?.args?.[0]?.startsWith("/") && write?.args?.[0]?.endsWith("/mcp_server.py"),
+    `args[0] 应指向持久卷上的 mcp_server.py，实际：${write?.args?.[0]}`,
+  );
+
+  // 白名单是这个服务器的核心安全边界：不给就全放 27 个工具（含投稿/私信）。
+  assert.equal(write?.env?.BILI_MCP_TOOLS, "bili_reply", "白名单必须只放 bili_reply");
+
+  // vendored 源码必须随包存在，且带许可证（MIT，AGI_Ananas）。
+  const vendor = join(packagePath, "vendor", "bilibili-mcp");
+  await (await import("node:fs/promises")).stat(join(vendor, "mcp_server.py"));
+  await (await import("node:fs/promises")).stat(join(vendor, "LICENSE"));
+  const source = await (await import("node:fs/promises")).readFile(join(vendor, "mcp_server.py"), "utf8");
+  assert.ok(source.includes("_ALLOWED"), "vendored 脚本必须带白名单补丁");
+  assert.ok(source.includes('BILI_MCP_TOOLS'), "vendored 脚本必须读 BILI_MCP_TOOLS");
+  assert.ok(source.includes('.bilibili-mcp'), "vendored 脚本必须读本包的凭证位置");
+});
+
 test("走包清单发现路径（packages）时，扩展与 skill 都被认到", async () => {
   const dir = await mkdtemp(join(tmpdir(), "pi-bili-scroll-pkg-"));
   try {

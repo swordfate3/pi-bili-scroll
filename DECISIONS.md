@@ -227,3 +227,40 @@ npm `latest` 双向确认）。
 2. 写回归测试后要**验证它确实抓得住 bug**：把旧的错误实现临时放回去，确认测试失败，再恢复。
    这次就是这么验的（递归版本下 3 个用例失败，恢复后全绿）。
 3. 批量正则改写后必须人眼检查被改的那个函数本身有没有被误伤 —— 这次正是函数体被自己的替换规则吃掉。
+
+## 18. 写能力用 vendor 的 AGI_Ananas 实现，但白名单只放 `bili_reply`
+
+**状态：** 已采纳（v1.1.0）
+
+**背景：** 用户要求"拉取 AGI_Ananas/bilibili-mcp，复用它的能力"。查证：
+`AGI_Ananas/bilibili-mcp` 已 404（改名或删除），现存仓库是
+[`adoresever/bilibili-mcp`](https://github.com/adoresever/bilibili-mcp)，其 `LICENSE` 署名仍是
+`Copyright (c) 2026 AGI_Ananas` —— 同一份 27 工具实现，最后提交 2026-03-10。
+
+**决定：** vendor `mcp_server.py` + `LICENSE` 到本包，只打**两处**最小补丁（同 DSH 插件当初的思路）：
+
+1. **凭证位置**：上游读 `Path(__file__).parent/bili_credential.json`，改为
+   `BILI_CRED_FILE` 覆盖或默认 `~/.bilibili-mcp/config.json`（与本包登录写的是同一份），
+   并加 UTF-8 + `try/except` + `isinstance` 容错。
+2. **工具白名单**：上游 27 个 `@mcp.tool()` 全注册，无开关。加 `_ALLOWED` + `tool()` shim
+   （读 `BILI_MCP_TOOLS`），并把 27 处装饰器换成 `@tool()`；不设该变量时行为与上游一致。
+
+**代价：** 多一个 Python venv（约 150MB，在 `~/.local/share/bili-scroll/mcp-write/`），
+且这份上游已半年没更新。换来的是**真的能发评论**，而不是自己另写一套 API 调用。
+
+## 19. 写操作必须过两道闸，且无 UI 模式一律拒绝
+
+**状态：** 已采纳
+
+**原因：** 发评论是拿用户的号**公开发布、不可撤回**。单靠提示词"别乱发"不算闸门
+（这正是上游 DSH 插件加白名单时的原话）。所以：
+
+1. **白名单**：`BILI_MCP_TOOLS=bili_reply` —— 名单外的工具连名字都不出现在 `list_tools`，
+   模型根本不知道它们存在。实测：27 → 1。
+2. **`tool_call` 钩子**：真正执行前用 `ctx.ui.confirm` 让用户点头，并把**要发的正文**显示出来；
+   用户取消就 `block`。
+   **无 UI（print/JSON/RPC）时直接 block** —— 按扩展规则的 fail-closed 要求，
+   不能因为"没有界面"就默许。这条有单测覆盖（`isWriteInvocation` / `findText`）。
+
+**不放开自动发评论**：即使技术上能做到"刷完自动 @ 你"，也不做 —— 自动公开发言不可撤回，
+风险与收益不匹配。要发就人点一下。

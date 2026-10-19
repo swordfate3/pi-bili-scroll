@@ -8,6 +8,18 @@
       "enabled": true,
       "exposure": "codemode",
       "description": "B站只读读取：搜索视频、字幕、评论、章节、视频元数据、UP主与收藏夹。12 个工具，无发评论/私信/上传能力。登录凭证在 ~/.bilibili-mcp/config.json，扫码用 node <该 cli.js> setup。"
+    },
+    "bilibili-write": {
+      "command": "/home/node/.local/share/bili-scroll/mcp-write/venv/bin/python",
+      "args": [
+        "/home/node/.local/share/bili-scroll/mcp-write/mcp_server.py"
+      ],
+      "env": {
+        "BILI_MCP_TOOLS": "bili_reply"
+      },
+      "enabled": true,
+      "exposure": "codemode",
+      "description": "B站写能力（vendor 自 AGI_Ananas/bilibili-mcp，MIT，已打白名单补丁）。通过 BILI_MCP_TOOLS 只注册 bili_reply 一个工具：在视频下发评论或回复楼中楼。发评论前必须取得用户明确同意。"
     }
   }
 }

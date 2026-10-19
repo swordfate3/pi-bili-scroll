@@ -105,6 +105,45 @@ let activeLogin: ActiveLogin | null = null;
  * 各分支 details 字段不同，若逐个写 return 字面量，TS 会把 TDetails 推成"第一个分支的形状"，
  * 后续分支就报不兼容 —— 统一收敛成 Record<string, unknown> 最省事也最不容易再踩。
  */
+
+/** 写能力工具名（vendor 自 AGI_Ananas/bilibili-mcp，白名单只放这一个）。 */
+export const WRITE_TOOL_MARKER = "bili_reply";
+
+/** 递归找出参数里第一个非空的 text 字段（用来在确认框里显示"要发什么"）。 */
+export function findText(value: unknown, depth = 0): string | null {
+  if (depth > 6 || value === null || typeof value !== "object") return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findText(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const direct = record.text;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+  for (const child of Object.values(record)) {
+    const found = findText(child, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * 这次调用是否是「往 B 站写东西」。
+ * MCP 工具经 adapter 是以代理形式出现的（`mcp` + args.tool = "...bili_reply"），
+ * 也可能直接以命名空间工具出现，所以两者都认：工具名命中，或参数里出现该标记。
+ */
+export function isWriteInvocation(toolName: string, input: unknown): boolean {
+  if (toolName === WRITE_TOOL_MARKER || toolName.endsWith(`__${WRITE_TOOL_MARKER}`)) return true;
+  if (toolName !== "mcp" && !toolName.startsWith("mcp__")) return false;
+  try {
+    return JSON.stringify(input ?? {}).includes(WRITE_TOOL_MARKER);
+  } catch {
+    return false;
+  }
+}
+
 export function jsonResult(details: Record<string, unknown>) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(details, null, 2) }],
@@ -352,6 +391,38 @@ export default function (pi: ExtensionAPI) {
       };
       return jsonResult(details);
     },
+  });
+
+
+  // ── 写能力闸门 ──────────────────────────────────────────────────────────────
+  // 发评论是拿用户的号说话，属于不可撤销的对外动作：模型不能自己决定。
+  // 有 UI 时必须用户在弹窗里点头；无 UI（print/JSON/RPC）时**一律拒绝**（fail closed），
+  // 绝不因为"没有界面"就默许通过。
+  pi.on("tool_call", async (event, ctx) => {
+    const toolName = String(event.toolName ?? "");
+    const input = event.input as unknown;
+    if (!isWriteInvocation(toolName, input)) return;
+
+    const text = findText(input);
+    const preview = text
+      ? text.length > 200 ? `${text.slice(0, 200)}…` : text
+      : "（未能从参数里读到评论正文）";
+
+    if (!ctx.hasUI) {
+      return {
+        block: true,
+        reason:
+          `已阻止 B 站写操作：发评论必须由用户确认，当前为无 UI 模式（${ctx.mode}），` +
+          "已按 fail-closed 拒绝。请在交互会话里发起，或让用户自己发。",
+      };
+    }
+    const approved = await ctx.ui.confirm(
+      "确认往 B 站发评论？",
+      `内容：${preview}\n\n这会用你已登录的 B 站账号公开发布，无法撤回。`,
+    );
+    if (!approved) {
+      return { block: true, reason: "用户拒绝了这次 B 站写操作。" };
+    }
   });
 
   pi.on("session_start", async (_event, ctx) => {
