@@ -7,6 +7,19 @@
 > 设计取舍写在 [`DECISIONS.md`](./DECISIONS.md)，用法写在 [`README.md`](./README.md)，
 > 这里只回答一个问题：**这一版和上一版差在哪。**
 
+## [2.1.1] — 2026-10-19
+
+### 修复（命名混淆）
+- skill 与扩展命令**同名**，都在补全里出现，看起来像"重复注册"：
+  `/bili-scroll`（动作）和 `/skill:bili-scroll`（说明书）名字一模一样。
+  它们其实是两个命名空间、两种机制，功能也不同：
+  - `/bili-scroll` → **真跑一轮**（注入章程与路径、重置读取预算、写日报）
+  - `/skill:bili-scroll` → **只把说明书加载进上下文**，什么也不执行
+
+  改名让名字本身体现用途：`bili-scroll` → **`bili-scroll-duty`**、
+  `bili-login` → **`bili-login-flow`**（对应 `/skill:bili-scroll-duty` / `/skill:bili-login-flow`）。
+- 只改 frontmatter 的 `name`，**不动目录**：`charter.ts` 按路径读 SKILL.md，不受影响。
+
 ## [2.1.0] — 2026-10-19
 
 ### 移除

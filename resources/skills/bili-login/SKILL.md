@@ -1,5 +1,5 @@
 ---
-name: bili-login
+name: bili-login-flow
 description: 当 B 站读取失败、提示未登录或凭证过期时使用。默认走扫码登录：把登录二维码渲染成 PNG 存到 downloads 目录并把路径告诉用户，用户用手机 B站 App 扫码确认，登录成功后立即删除二维码图片。不索取、不显示、不保存任何 Cookie 值。
 ---
 

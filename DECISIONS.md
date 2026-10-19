@@ -521,3 +521,18 @@ L4 的典型失败是 criterion drift。
 **决定：** 删模板，人设只保留"巡检轮次注入"一个入口，文本落地为独立文件
 `~/.local/share/bili-scroll/persona/AGENTS.md`（不再软链到任何 pi 资源）。
 需要临时用编辑视角看一条视频时，直接说，不靠切换命令。
+
+## 36. skill 与命令同名会看起来像重复，改名让名字体现用途
+
+**状态：** 已采纳（v2.1.1）
+
+**现象：** 补全列表里同时出现 `/bili-scroll` 与 `/skill:bili-scroll`，看着像注册了两遍。
+
+**实情：** 两者是不同命名空间、不同机制 ——
+- `/bili-scroll`：扩展命令，**真的跑一轮**（注入章程与路径、重置读取预算、写日报）；
+- `/skill:bili-scroll`：只把 SKILL.md 加载进上下文，不执行任何动作。
+两者并不冲突（skill 必须带 `/skill:` 前缀），但**同名会让人以为是冗余**。
+
+**决定：** 改 skill 的 frontmatter `name`：`bili-scroll-duty`、`bili-login-flow`。
+只改名字不动目录 —— `charter.ts` 按路径读文件，目录名保持不变更安全。
+现在名字本身说明了它是什么：命令是**动作**，skill 是**说明书**。

@@ -130,11 +130,13 @@ test("走包清单发现路径（packages）时，扩展与 skill 都被认到",
     assert.ok(loaded.extensions[0].commands.has("bili-scroll"));
     assert.ok(loaded.extensions[0].tools.has("bili_scroll_status"));
 
-    // pi.skills 指向的目录里必须真的有一个可发现的 bili-scroll skill。
+    // pi.skills 指向的目录里必须真的有一个可发现的章程 skill。
+    // ⚠️ 名字带 -duty 后缀是刻意的：`/bili-scroll` 是**动作**（跑一轮），
+    //    `/skill:bili-scroll-duty` 只是**说明书**。名字相同会让人以为是重复。
     const skills = loader.getSkills();
     assert.deepEqual(skills.diagnostics, []);
     assert.ok(
-      skills.skills.some((skill) => skill.name === "bili-scroll"),
+      skills.skills.some((skill) => skill.name === "bili-scroll-duty"),
       `未发现 bili-scroll skill，实际发现：${skills.skills.map((skill) => skill.name).join(", ")}`,
     );
   } finally {

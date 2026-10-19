@@ -1,5 +1,5 @@
 ---
-name: bili-scroll
+name: bili-scroll-duty
 description: 替用户刷一轮 B 站并写日报时使用。给定关注关键词，搜索近期视频、逐条读字幕原文与评论、按「值不值得占用你一次注意力」筛选，把结果写成 Markdown 日报（配置为 reportDetail=none 时只汇报不写文件）。当前能力为只读：可以搜索、读字幕、读评论、读元数据，不能发评论、私信或投稿。
 ---
 
