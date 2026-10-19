@@ -229,6 +229,18 @@ export async function removeQrFile(filePath: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * 换一张新二维码前，先清掉上一张。
+ *
+ * 踩过的坑：`force` 重新生成时如果直接覆盖 `activeLogin`，上一张图片的路径就丢了，
+ * 文件永远留在 downloads 里（实测留下过 `bili-login-qr-20261019-082557.png`）。
+ * 二维码是一次性登录入口，留着既是垃圾也容易被截图外传。
+ */
+export async function discardPreviousQr(previousPath: string | null): Promise<boolean> {
+  if (!previousPath) return false;
+  return removeQrFile(previousPath);
+}
+
 /** 二维码文件名（带时间戳，避免覆盖上一张）。 */
 export function qrFileName(now: Date = new Date()): string {
   const stamp = [

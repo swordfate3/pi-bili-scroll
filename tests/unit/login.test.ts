@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   QR_TTL_SECONDS,
   buildCredential,
+  discardPreviousQr,
   mapQrCode,
   parseCookies,
   parseCookiesFromUrl,
@@ -127,4 +128,20 @@ test("qrFileName 带时间戳且以 .png 结尾", () => {
 
 test("二维码有效期常量是 180 秒量级", () => {
   assert.equal(QR_TTL_SECONDS, 180);
+});
+
+test("重新生成二维码前会清掉上一张（force 重发不留孤儿图片）", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bili-login-"));
+  try {
+    const oldQr = join(dir, "old.png");
+    await writeFile(oldQr, "x");
+    // 有上一张 → 删掉并返回 true
+    assert.equal(await discardPreviousQr(oldQr), true);
+    // 再删一次（已不存在）→ false，不抛错
+    assert.equal(await discardPreviousQr(oldQr), false);
+    // 没有上一张（首次登录）→ false
+    assert.equal(await discardPreviousQr(null), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

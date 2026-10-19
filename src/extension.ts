@@ -22,6 +22,7 @@ import {
   pollQrSession,
   qrFileName,
   readExistingCredential,
+  discardPreviousQr,
   removeQrFile,
   renderQrPng,
   requestQrSession,
@@ -269,6 +270,7 @@ export default function (pi: ExtensionAPI) {
       try {
         const session = await requestQrSession();
         const qrPath = await renderQrPng(session.url, join(resolveQrDir(ctx.cwd, (await snapshot()).config.qrDir), qrFileName()));
+        await discardPreviousQr(activeLogin?.qrPath ?? null);
         activeLogin = { ...session, qrPath };
         say(
           ctx,
@@ -326,6 +328,7 @@ export default function (pi: ExtensionAPI) {
       const session = await requestQrSession();
       const dir = params.dir ?? resolveQrDir(ctx.cwd, snap.config.qrDir);
       const qrPath = await renderQrPng(session.url, join(dir, qrFileName()));
+      await discardPreviousQr(activeLogin?.qrPath ?? null);
       activeLogin = { ...session, qrPath };
       const details = {
         status: "waiting_for_scan",
