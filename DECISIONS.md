@@ -394,3 +394,31 @@ whale 的 `watch-video` 用 ffmpeg 的 `scene` 过滤器挑变化点、再 `tile
 
 **教训：** 「时间对了」要拆成两件事——**绝对时刻**与**时区解释**。只验 `date` 输出等于网络时间，
 不足以说明调度是对的；必须再验「窗口推出的绝对时刻」是否符合预期。
+
+## 28. 定时任务必须调「命令」，不能用自然语言描述任务
+
+**状态：** 已采纳（v1.9.0）
+
+**背景：** daemon 原命令是 `pi -p "按 bili-scroll 判据刷一轮"`。实测那一轮**跑成功了**、
+模型也认真读字幕做了筛选，但**报告只打印在聊天里，没写文件** —— 因为它不知道确切路径。
+于是 daemon 等不到报告，整条链路无效。
+
+**决定：** 改用 `pi -p "/bili-scroll"`。命令会把含确切路径的完整请求注入当轮，
+报告才会落到 `out/<日期>.md`。
+
+**教训：** 「模型做对了事」和「产物落到该落的地方」是两件事。前者靠提示词，后者靠**确定性注入**
+（命令里写死路径），不能指望模型自己推断。
+
+## 29. 只读服务器已失效，改用 whale 的工具
+
+**状态：** 已采纳（2026-10-19）
+
+**实测：** `@xzxzzx/bilibili-mcp@1.14.3` 的 `search_bilibili_videos` 返回
+`UPSTREAM_RESPONSE_INVALID`（"The remote service returned an invalid bounded response"），
+而同一时刻 `bili_whale search` 正常返回 20 条。B站改了响应格式，读服务器没跟上。
+
+**决定：** SKILL 里写明**优先 `bili_whale`**（search/subtitles/debrief/comment-digest），
+`mcp` 工具作备用；两条都失败就如实报错、**不写日报**（不把失败伪装成"这轮没值得看的"）。
+
+**含义：** 本包对 `@xzxzzx/bilibili-mcp` 的依赖可以降级 —— 读能力实际上由 vendor 的
+whale 工具承担。要不要干脆移除那个 MCP 服务器，等确认 whale 覆盖全部所需能力再定。

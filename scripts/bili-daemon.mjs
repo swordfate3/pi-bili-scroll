@@ -20,11 +20,11 @@
  *   node scripts/bili-daemon.mjs --status       # 打印计划与状态
  */
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { dayKey, needsCatchUp, notifyTelegram, planToday, setTimeZone, shouldRun } from "./schedule-core.mjs";
+import { dayKey, needsCatchUp, notifyTelegram, planToday, setTimeZone, shouldRun, summarizeReport } from "./schedule-core.mjs";
 
 // ⚠️ Node 的 fetch 不读 HTTP_PROXY。但 `NODE_USE_ENV_PROXY` 必须在 Node **启动前**生效，
 // 在脚本里 process.env 赋值没用（实测）。所以真正兜底的是 schedule-core 里
@@ -48,8 +48,17 @@ const DEFAULTS = {
   catchUp: true,
   /** 使用者时区。容器是 UTC，不能拿容器时区解释窗口。 */
   timezone: "Asia/Shanghai",
-  /** 到点后实际执行的命令（数组形式，避免 shell 拼接） */
-  command: ["pi", "-p", "按 bili-scroll 判据刷一轮"],
+  /** 一轮巡检最多等多久（秒）产出报告；超时就推超时通知 */
+  roundTimeoutSeconds: 1200,
+  /**
+   * 到点后实际执行的命令（数组形式，避免 shell 拼接）。
+   *
+   * ⚠️ 必须用 `/bili-scroll` 这个**命令**，不能用一句自然语言描述。
+   * 实测：`pi -p "按 bili-scroll 判据刷一轮"` 会让模型在聊天里输出报告、
+   * **不写文件**（它不知道该写到哪个路径）；而 `/bili-scroll` 会注入含确切路径的请求，
+   * 报告才会落到 out/<日期>.md。
+   */
+  command: ["pi", "-p", "/bili-scroll"],
 };
 const DEFAULT_NOTIFY = { telegram: { token: "", chatId: "" } };
 
@@ -69,11 +78,15 @@ function writeJson(path, value) {
 }
 function log(line) {
   const text = `${new Date().toISOString()}  ${line}`;
-  console.log(text);
+  // ⚠️ 不要同时 console.log + 写文件：启动时 stdout 会被重定向到同一个 daemon.log，
+  // 于是每行都出现两次（实测踩过）。
   try {
     mkdirSync(dirname(LOG_PATH), { recursive: true });
     appendFileSync(LOG_PATH, `${text}\n`);
-  } catch {}
+  } catch {
+    // 日志写不进去时至少打到 stderr，别静默吞掉
+    console.error(text);
+  }
 }
 
 function reportPathFor(date = new Date()) {
@@ -93,21 +106,57 @@ function saveState(state) {
   writeFileSync(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
 }
 
-/** 跑一轮巡检（detached，不阻塞循环）。 */
-function runRound(command, dry) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** 报告的 mtime（毫秒）；不存在返回 0。用来判断"这一轮是否真的产出了新报告"。 */
+function reportStamp(date = new Date()) {
+  try {
+    return statSync(reportPathFor(date)).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * 跑一轮巡检并**等它产出报告**。
+ *
+ * 之前只发一句"已开始"就完事 —— 用户收到通知却不知道结果，等于没推。
+ * 现在 spawn 之后轮询报告 mtime，等到变化（或超时）再返回报告内容，
+ * 由调用方压成摘要推出去。
+ */
+async function runRound(command, dry, options = {}) {
+  const { timeoutSeconds = 1200, pollSeconds = 10 } = options;
   const [bin, ...args] = command;
   log(`▶ 执行：${bin} ${args.join(" ")}`);
   if (dry) {
     log("  [dry] 未真正执行");
-    return;
+    return { dryRun: true };
   }
+
+  const before = reportStamp();
   const child = spawn(bin, args, {
     detached: true,
     stdio: ["ignore", "inherit", "inherit"],
-    env: { ...process.env, BILI_SCROLL_DAEMON: "1" },
+    env: { ...process.env, BILI_SCROLL_DAEMON: "1", NODE_USE_ENV_PROXY: "1" },
   });
   child.unref();
-  log(`  已拉起 pid=${child.pid ?? "?"}（不等待完成）`);
+  log(`  已拉起 pid=${child.pid ?? "?"}，等报告落盘（最多 ${timeoutSeconds}s）`);
+
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  while (Date.now() < deadline) {
+    await sleep(pollSeconds * 1000);
+    const after = reportStamp();
+    if (after !== before && after > 0) {
+      log("  ✓ 报告已更新");
+      try {
+        return { reportPath: reportPathFor(), content: readFileSync(reportPathFor(), "utf8") };
+      } catch {
+        return { reportPath: reportPathFor(), content: "" };
+      }
+    }
+  }
+  log(`  ✗ 等待超时（${timeoutSeconds}s 内报告没有更新）`);
+  return { timedOut: true, reportPath: reportPathFor() };
 }
 
 async function notifySummary(text, dry) {
@@ -154,8 +203,28 @@ async function tick(dry) {
 
   saveState({ ...state, fired: true, firedAt: now.toISOString(), reason: check.why });
   log(`⏰ 触发：${check.why}`);
-  runRound(config.command ?? DEFAULTS.command, dry);
-  await notifySummary(`B站巡检已开始（${check.why}）· 报告会在 ${reportPathFor(now)}`, dry);
+
+  const result = await runRound(config.command ?? DEFAULTS.command, dry, {
+    timeoutSeconds: Number(config.roundTimeoutSeconds ?? 1200),
+  });
+
+  if (result.dryRun) {
+    await notifySummary(`[dry] 本应执行一轮巡检（${check.why}）`, dry);
+    return;
+  }
+  if (result.timedOut) {
+    await notifySummary(`⚠️ B站巡检超时：${config.roundTimeoutSeconds ?? 1200}s 内没有产出报告\n${reportPathFor(now)}`, dry);
+    return;
+  }
+  if (!result.content) {
+    await notifySummary(`⚠️ B站巡检跑完了，但报告是空的\n${result.reportPath}`, dry);
+    return;
+  }
+  const { text, count } = summarizeReport(result.content, {
+    intro: `📺 B站巡检 ${dayKey(now)} · ${check.why}`,
+  });
+  log(`  报告解析出 ${count} 条，开始推送`);
+  await notifySummary(text, dry);
 }
 
 const argv = process.argv.slice(2);
