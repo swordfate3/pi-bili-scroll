@@ -40,6 +40,11 @@ export interface BiliScrollConfig {
   minMinutesBetweenComments: number;
   /** 同一个视频 N 天内只评论一次 */
   sameVideoCooldownDays: number;
+  /**
+   * 使用者时区（IANA 名）。容器可能是 UTC，而窗口、"今天"都要按使用者体感算。
+   * 实测：容器 Etc/UTC，用户 UTC+8 ⇒ 20:00 窗口会在凌晨 4 点触发。
+   */
+  timezone: string;
 }
 
 export const DEFAULT_CONFIG: BiliScrollConfig = {
@@ -54,6 +59,7 @@ export const DEFAULT_CONFIG: BiliScrollConfig = {
   maxCommentsPerDay: 3,
   minMinutesBetweenComments: 30,
   sameVideoCooldownDays: 7,
+  timezone: "Asia/Shanghai",
 };
 
 const REPORT_DETAILS: readonly ReportDetail[] = ["full", "brief", "none"];
@@ -155,6 +161,20 @@ export function normalizeConfig(raw: unknown): { config: BiliScrollConfig; notic
       config[key] = value;
     } else {
       notices.push(`${key} 不是非负整数，已用默认值 ${DEFAULT_CONFIG[key]}。`);
+    }
+  }
+
+  if (record.timezone !== undefined) {
+    const value = record.timezone;
+    if (typeof value === "string" && value.trim()) {
+      try {
+        new Intl.DateTimeFormat("en-CA", { timeZone: value.trim() });
+        config.timezone = value.trim();
+      } catch {
+        notices.push(`timezone「${value}」不是合法 IANA 时区名，已用默认值 Asia/Shanghai。`);
+      }
+    } else {
+      notices.push("timezone 不是非空字符串，已用默认值 Asia/Shanghai。");
     }
   }
 

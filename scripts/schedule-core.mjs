@@ -21,16 +21,53 @@ export function parseHHMM(text) {
   return h * 60 + min;
 }
 
-/** 本地日期键 YYYY-MM-DD（不能用 UTC，"今天"要和用户体感一致）。 */
+/**
+ * 使用者时区。
+ *
+ * ⚠️ 容器实测 `Etc/UTC`，用户在 UTC+8。若按容器时区解释窗口：
+ * 配置的 20:00–22:00 实际会在**北京时间凌晨 4 点**触发（已实测）。
+ * 所以这里显式指定时区，**不依赖进程 TZ**。
+ */
+export const DEFAULT_TIMEZONE = "Asia/Shanghai";
+
+let activeTimeZone = DEFAULT_TIMEZONE;
+
+export function setTimeZone(timeZone) {
+  const candidate = String(timeZone ?? "").trim();
+  if (!candidate) return false;
+  try {
+    new Intl.DateTimeFormat("en-CA", { timeZone: candidate });
+    activeTimeZone = candidate;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function getTimeZone() {
+  return activeTimeZone;
+}
+
+/** 日期键 YYYY-MM-DD，按使用者时区（不是容器时区）。 */
 export function dayKey(date = new Date()) {
-  const y = date.getFullYear();
-  const mo = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${mo}-${d}`;
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: activeTimeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
 }
 
 export function minutesOfDay(date = new Date()) {
-  return date.getHours() * 60 + date.getMinutes();
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: activeTimeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const h = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
+  const m = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
+  return h * 60 + m;
 }
 
 /**

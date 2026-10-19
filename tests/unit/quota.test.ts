@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { setTimeZone } from "../../src/home.js";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +15,8 @@ import {
   saveQuota,
 } from "../../src/quota.js";
 
+// 这个文件里的日期都用 UTC 构造，所以显式设成 UTC，别依赖宿主时区
+setTimeZone("UTC");
 const now = new Date(2026, 9, 19, 12, 0);
 
 test("首次发评论放行", () => {

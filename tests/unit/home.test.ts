@@ -1,14 +1,34 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { join } from "node:path";
-import { DEFAULT_HOME, dayKey, homeDir, pathsFor, reportPath } from "../../src/home.js";
+import { DEFAULT_HOME, dayKey, formatDayKey, formatMinutesOfDay, homeDir, pathsFor, reportPath, setTimeZone } from "../../src/home.js";
 
-test("dayKey 按本地日期补零", () => {
-  assert.equal(dayKey(new Date(2026, 0, 3)), "2026-01-03");
-  assert.equal(dayKey(new Date(2026, 11, 31)), "2026-12-31");
-  // 本地 23:59 与次日 00:00 分属两天（不能用 UTC 算）
-  assert.equal(dayKey(new Date(2026, 5, 9, 23, 59)), "2026-06-09");
-  assert.equal(dayKey(new Date(2026, 5, 10, 0, 0)), "2026-06-10");
+test("formatDayKey 按指定时区算日期（不依赖宿主 TZ）", () => {
+  // 2026-01-03T20:00Z = 北京时间 01-04 04:00
+  const t = new Date("2026-01-03T20:00:00Z");
+  assert.equal(formatDayKey(t, "UTC"), "2026-01-03");
+  assert.equal(formatDayKey(t, "Asia/Shanghai"), "2026-01-04", "跨日必须按使用者时区");
+});
+
+test("dayKey 默认用 Asia/Shanghai，切换后跟着变", () => {
+  setTimeZone("Asia/Shanghai");
+  assert.equal(dayKey(new Date("2026-06-09T15:59:00Z")), "2026-06-09"); // 北京 23:59
+  assert.equal(dayKey(new Date("2026-06-09T16:00:00Z")), "2026-06-10"); // 北京 00:00
+  setTimeZone("UTC");
+  assert.equal(dayKey(new Date("2026-06-09T16:00:00Z")), "2026-06-09");
+  setTimeZone("Asia/Shanghai");
+});
+
+test("formatMinutesOfDay 按指定时区算当天第几分钟", () => {
+  const t = new Date("2026-10-19T10:43:00Z");
+  assert.equal(formatMinutesOfDay(t, "UTC"), 643);           // 10:43
+  assert.equal(formatMinutesOfDay(t, "Asia/Shanghai"), 1123); // 18:43
+});
+
+test("setTimeZone 拒绝非法时区名且不改变现状", () => {
+  setTimeZone("Asia/Shanghai");
+  setTimeZone("Mars/Olympus");
+  assert.equal(dayKey(new Date("2026-06-09T16:00:00Z")), "2026-06-10", "非法时区应被忽略");
 });
 
 test("pathsFor 拼出家目录下的固定结构", () => {

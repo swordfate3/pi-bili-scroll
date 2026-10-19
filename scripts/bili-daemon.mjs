@@ -24,7 +24,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeF
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { dayKey, needsCatchUp, notifyTelegram, planToday, shouldRun } from "./schedule-core.mjs";
+import { dayKey, needsCatchUp, notifyTelegram, planToday, setTimeZone, shouldRun } from "./schedule-core.mjs";
 
 // ⚠️ Node 的 fetch 不读 HTTP_PROXY。但 `NODE_USE_ENV_PROXY` 必须在 Node **启动前**生效，
 // 在脚本里 process.env 赋值没用（实测）。所以真正兜底的是 schedule-core 里
@@ -46,6 +46,8 @@ const DEFAULTS = {
   maxWakesPerDay: 2,
   tickSeconds: 60,
   catchUp: true,
+  /** 使用者时区。容器是 UTC，不能拿容器时区解释窗口。 */
+  timezone: "Asia/Shanghai",
   /** 到点后实际执行的命令（数组形式，避免 shell 拼接） */
   command: ["pi", "-p", "按 bili-scroll 判据刷一轮"],
 };
@@ -126,6 +128,7 @@ async function notifySummary(text, dry) {
 
 async function tick(dry) {
   const config = readJson(CONFIG_PATH, DEFAULTS);
+  if (!setTimeZone(config.timezone)) log(`⚠️ 时区「${config.timezone}」无效，沿用默认`);
   if (!config.enabled) return;
 
   const now = new Date();
@@ -162,6 +165,7 @@ const statusOnly = argv.includes("--status");
 
 if (statusOnly) {
   const config = readJson(CONFIG_PATH, DEFAULTS);
+  setTimeZone(config.timezone);
   const state = loadState();
   console.log(JSON.stringify({ config, state, report: reportPathFor(), reportExists: reportExists() }, null, 2));
   process.exit(0);

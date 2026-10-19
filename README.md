@@ -196,6 +196,10 @@ node scripts/setup-mcp-write.mjs
 
 ⚠️ **容器重启后进程会丢**，需要重新 `/bili-daemon start` —— 这是没有 init 系统的环境限制。
 
+⚠️ **时区**：容器实测是 `Etc/UTC`，而窗口按**使用者时区**解释，配置项 `"timezone"`（默认
+`Asia/Shanghai`）。这点很关键——不设的话，写 `20:00–22:00` 会在北京时间凌晨 4 点跑。
+实现上用 `Intl.DateTimeFormat` 显式指定时区，不依赖容器 `TZ`。
+
 ```json
 // ~/.local/share/bili-scroll/schedule.json
 {

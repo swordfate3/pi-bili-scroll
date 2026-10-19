@@ -22,7 +22,7 @@ import type {
 import { Type } from "typebox";
 import { loadCharter } from "./charter.js";
 import { loadConfig, type BiliScrollConfig } from "./config.js";
-import { dayKey, pathsFor, reportPath, type BiliScrollPaths } from "./home.js";
+import { dayKey, pathsFor, reportPath, setTimeZone, type BiliScrollPaths } from "./home.js";
 import {
   CREDENTIAL_PATH,
   QR_TTL_SECONDS,
@@ -59,6 +59,8 @@ async function snapshot(): Promise<Snapshot> {
   const day = dayKey();
   const report = reportPath(paths, day);
   const { config, notices } = await loadConfig(paths);
+  // 时区要在算 dayKey / 窗口之前定下来 —— 容器可能是 UTC，用户不是。
+  setTimeZone(config.timezone);
   let ranToday = false;
   let reportMtime: string | null = null;
   let reportBytes: number | null = null;

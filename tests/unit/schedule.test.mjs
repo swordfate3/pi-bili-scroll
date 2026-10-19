@@ -9,9 +9,13 @@ import {
   parseHHMM,
   summarizeReport,
   planToday,
+  setTimeZone,
   shouldRun,
   windowRange,
 } from "../../scripts/schedule-core.mjs";
+
+// 本文件部分用例用本地时间构造 Date，显式设 UTC，别依赖宿主时区
+setTimeZone("UTC");
 
 /** 按顺序吐出预设值，用完后重复最后一个 —— 让"窗口/位置/跳过"三次取值可控。 */
 function seqRng(values) {
@@ -144,8 +148,19 @@ test("notifyTelegram：底层抛错也收敛成 sent:false", async () => {
   assert.match(r.reason, /network down/);
 });
 
-test("minutesOfDay 用本地时间", () => {
-  assert.equal(minutesOfDay(new Date(2026, 9, 19, 20, 30)), 1230);
+test("minutesOfDay 按当前设置的时区", () => {
+  setTimeZone("UTC");
+  assert.equal(minutesOfDay(new Date("2026-10-19T10:43:00Z")), 643);
+  setTimeZone("Asia/Shanghai");
+  assert.equal(minutesOfDay(new Date("2026-10-19T10:43:00Z")), 1123, "北京 18:43");
+  setTimeZone("UTC");
+});
+
+test("setTimeZone 拒绝非法名并保留原值", () => {
+  setTimeZone("Asia/Shanghai");
+  assert.equal(setTimeZone("Nope/Zone"), false);
+  assert.equal(minutesOfDay(new Date("2026-10-19T10:43:00Z")), 1123, "非法时区不该改变现状");
+  setTimeZone("UTC");
 });
 
 test("shouldRun：今天已有报告就不再跑（即使到点、即使没 fired）", () => {
