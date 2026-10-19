@@ -19,7 +19,7 @@
  *   node scripts/bili-daemon.mjs --dry          # 只打印"本该执行什么"，不真的跑
  *   node scripts/bili-daemon.mjs --status       # 打印计划与状态
  */
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -60,7 +60,10 @@ const DEFAULTS = {
    */
   command: ["pi", "-p", "/bili-scroll"],
 };
-const DEFAULT_NOTIFY = { telegram: { token: "", chatId: "" } };
+const DEFAULT_NOTIFY = { telegram: { token: "", chatId: "" }, bilibiliDm: true };
+
+/** vendor 进来的 whale 工具入口（相对本脚本的上一级）。 */
+const WHALE_ENTRY = join(dirname(fileURLToPath(import.meta.url)), "..", "vendor", "bili-whale", "tools", "bili.mjs");
 
 function readJson(path, fallback) {
   try {
@@ -175,6 +178,44 @@ async function notifySummary(text, dry) {
   log(result.sent ? "✓ 已推送 Telegram" : `✗ 推送失败：${result.reason}`);
 }
 
+/**
+ * 再把摘要发一条 B站私信给主人。
+ *
+ * 为什么不放进巡检那一轮：让它保持只读。daemon 手上已经有报告全文，
+ * 发私信是确定性动作，不需要模型掺和。
+ * ⚠️ B站私信正文上限 300 字，所以这里压成一行并截断 —— 只发 BV 号 + 一句话。
+ */
+async function notifyBilibiliDm(text, dry) {
+  const notify = readJson(NOTIFY_PATH, DEFAULT_NOTIFY);
+  if (notify.bilibiliDm === false) {
+    log("· B站私信已关闭（notify.bilibiliDm=false）");
+    return;
+  }
+  const msg = String(text ?? "").replace(/\s+/g, " ").trim().slice(0, 280);
+  if (!msg) return;
+  if (dry) {
+    log("  [dry] 本应发 B站私信");
+    return;
+  }
+  try {
+    await new Promise((resolve, reject) => {
+      execFile(
+        process.execPath,
+        [WHALE_ENTRY, "dm", "--msg", msg, "--go"],
+        { timeout: 120000, env: { ...process.env, NODE_USE_ENV_PROXY: "1" } },
+        (error, stdout, stderr) => {
+          if (error) return reject(new Error(String(stderr || stdout || error.message).slice(0, 300)));
+          resolve();
+        },
+      );
+    });
+    log("✓ 已发 B站私信");
+  } catch (error) {
+    // 私信失败不该影响整轮：Telegram 已经发过了
+    log(`✗ B站私信失败：${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 async function tick(dry) {
   const config = readJson(CONFIG_PATH, DEFAULTS);
   if (!setTimeZone(config.timezone)) log(`⚠️ 时区「${config.timezone}」无效，沿用默认`);
@@ -210,14 +251,19 @@ async function tick(dry) {
 
   if (result.dryRun) {
     await notifySummary(`[dry] 本应执行一轮巡检（${check.why}）`, dry);
+    await notifyBilibiliDm(`[dry] 本应执行一轮巡检（${check.why}）`, dry);
     return;
   }
   if (result.timedOut) {
-    await notifySummary(`⚠️ B站巡检超时：${config.roundTimeoutSeconds ?? 1200}s 内没有产出报告\n${reportPathFor(now)}`, dry);
+    const msg = `⚠️ B站巡检超时：${config.roundTimeoutSeconds ?? 1200}s 内没有产出报告`;
+    await notifySummary(`${msg}\n${reportPathFor(now)}`, dry);
+    await notifyBilibiliDm(msg, dry);
     return;
   }
   if (!result.content) {
-    await notifySummary(`⚠️ B站巡检跑完了，但报告是空的\n${result.reportPath}`, dry);
+    const msg = "⚠️ B站巡检跑完了，但报告是空的";
+    await notifySummary(`${msg}\n${result.reportPath}`, dry);
+    await notifyBilibiliDm(msg, dry);
     return;
   }
   const { text, count } = summarizeReport(result.content, {
@@ -225,6 +271,7 @@ async function tick(dry) {
   });
   log(`  报告解析出 ${count} 条，开始推送`);
   await notifySummary(text, dry);
+  await notifyBilibiliDm(text, dry);
 }
 
 const argv = process.argv.slice(2);
