@@ -136,5 +136,19 @@ B 站登录是否有效（需你本人扫码）。
 
 ## 许可
 
-MIT。B 站能力来自 [`@xzxzzx/bilibili-mcp`](https://github.com/XZXZZX-Ai/bilibili-mcp)（Apache-2.0），
-本包只做「什么时候刷、按什么判据挑、日报写哪」这一层，并把它的服务器声明在 `mcp.json` 里。
+本项目以 **MIT License** 开源，全文见 [LICENSE](./LICENSE)。商业使用、修改、再分发都可以，
+保留版权与许可声明即可。
+
+```
+SPDX-License-Identifier: MIT
+Copyright (c) 2026 swordfate3
+```
+
+### 第三方归属
+
+| 组件 | 许可 | 用途 |
+|---|---|---|
+| [`@xzxzzx/bilibili-mcp`](https://github.com/XZXZZX-Ai/bilibili-mcp) | Apache-2.0 | B 站读取能力（搜索/字幕/评论/元数据等 12 个只读工具）。**不在本仓库内分发**，由使用方自行安装，本包只在 `mcp.json` 里声明如何启动它 |
+| 思路来源 [`dsh-bili-scroll`](https://github.com/c1overzz/dsh-bili-scroll) | MIT | 「值不值得占用一次注意力」的判据与日报形态。本仓库是按 Pi 机制重写，未复制其代码 |
+
+本包自身只做「什么时候刷、按什么判据挑、日报写哪」这一层。
