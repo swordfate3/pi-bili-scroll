@@ -7,6 +7,7 @@ import {
   needsCatchUp,
   notifyTelegram,
   parseHHMM,
+  summarizeReport,
   planToday,
   shouldRun,
   windowRange,
@@ -157,4 +158,45 @@ test("shouldRun：今天已有报告就不再跑（即使到点、即使没 fire
   assert.match(r.why, /已经有报告/);
   // 没有报告时才该跑
   assert.equal(shouldRun(state, now, { reportExists: () => false }).due, true);
+});
+
+test("summarizeReport 只认 ### BV… 标题，不会把 ### 附注 当成视频", () => {
+  const md = [
+    "# B站巡检 2026-10-19",
+    "",
+    "刷了 13 条，挑出 2 条；因无字幕跳过 0 条；另有 2 条字幕错挂剔除。",
+    "",
+    "### BV1aaaaaaaa",
+    "**标题甲** — UP甲（10:00）",
+    "- 为什么值得：说清了某件事。",
+    "- 我的一句话：可以。",
+    "",
+    "### BV1bbbbbbbb",
+    "**标题乙** — UP乙（20:00）",
+    "- 为什么值得：给了可复现步骤。",
+    "",
+    "### 附注",
+    "- 字幕是 AI 识别的。",
+  ].join("\n");
+
+  const { text, count } = summarizeReport(md);
+  assert.equal(count, 2, "只应解析出两条视频");
+  assert.match(text, /BV1aaaaaaaa/);
+  assert.match(text, /BV1bbbbbbbb/);
+  assert.doesNotMatch(text, /附注/, "附注不该被当成一条视频");
+  assert.doesNotMatch(text, /为什么值得/, "条目正文里的前缀应被去掉");
+  assert.match(text, /刷了 13 条，挑出 2 条/, "引言行应保留（去掉错挂说明）");
+});
+
+test("summarizeReport 对空日报/无条目安全退化", () => {
+  const { text, count } = summarizeReport("");
+  assert.equal(count, 0);
+  assert.match(text, /没有解析出入选条目/);
+});
+
+test("summarizeReport 超长会截断", () => {
+  const md = "刷了 1 条\n\n### BV1zzzzzzzz\n" + "长".repeat(5000);
+  const { text } = summarizeReport(md, { maxChars: 200 });
+  assert.ok(text.length <= 240, `应被截断，实际 ${text.length}`);
+  assert.match(text, /已截断/);
 });

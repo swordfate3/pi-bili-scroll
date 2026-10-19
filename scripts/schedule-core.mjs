@@ -119,6 +119,51 @@ export function needsCatchUp(state, now, reportExists) {
   return minutesOfDay(now) > at + 60; // 过了计划时刻一小时还没跑，才补
 }
 
+// ── 日报摘要 ─────────────────────────────────────────────────────────────────
+
+/**
+ * 从日报 Markdown 里抽出入选条目，压成适合推送的纯文本。
+ *
+ * ⚠️ 只认 `### BV…` 这一种标题 —— 日报里还有 `### 附注` 这类小节，
+ * 按"任意 ###"切会把附注当成一条视频（踩过：推出去的消息第 6 条是附注）。
+ */
+export function summarizeReport(markdown, options = {}) {
+  const { maxChars = 3500, intro = "" } = options;
+  const lines = String(markdown ?? "").split("\n");
+  const head = lines.find((l) => l.includes("刷了")) ?? "";
+  const items = [];
+  let current = null;
+  for (const raw of lines) {
+    const line = raw.trim();
+    const heading = /^###\s+(BV[0-9A-Za-z]+)\s*$/.exec(line);
+    if (heading) {
+      if (current) items.push(current);
+      current = { bvid: heading[1], title: "", why: "" };
+      continue;
+    }
+    if (!current) continue;
+    if (!current.title && line && !line.startsWith("-")) {
+      current.title = line.replace(/\*\*/g, "");
+      continue;
+    }
+    if (!current.why && line.startsWith("- 为什么值得：")) {
+      current.why = line.replace("- 为什么值得：", "").replace(/。$/, "");
+    }
+  }
+  if (current) items.push(current);
+
+  const parts = [intro || `📺 B站巡检 ${new Date().toISOString().slice(0, 10)}`, ""];
+  if (head) parts.push(head.replace(/；另有.*$/, ""), "");
+  items.forEach((it, i) => {
+    parts.push(`${i + 1}. ${it.title}`);
+    parts.push(`   ${it.bvid}${it.why ? `\n   ${it.why}` : ""}`);
+  });
+  if (!items.length) parts.push("（这份日报里没有解析出入选条目）");
+  let text = parts.join("\n");
+  if (text.length > maxChars) text = `${text.slice(0, maxChars)}\n…（已截断）`;
+  return { text, count: items.length };
+}
+
 // ── 通知（Telegram）──────────────────────────────────────────────────────────
 
 /**
