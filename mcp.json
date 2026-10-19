@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "bilibili": {
+      "command": "node",
+      "args": [
+        "/home/node/.local/share/bili-scroll/mcp/node_modules/@xzxzzx/bilibili-mcp/dist/cli.js"
+      ],
+      "enabled": true,
+      "exposure": "codemode",
+      "description": "B站只读读取：搜索视频、字幕、评论、章节、视频元数据、UP主与收藏夹。12 个工具，无发评论/私信/上传能力。登录凭证在 ~/.bilibili-mcp/config.json，扫码用 node <该 cli.js> setup。"
+    }
+  }
+}

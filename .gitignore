@@ -1,0 +1,23 @@
+# Dependencies
+# 不要加尾斜杠：node_modules 在这里是指向持久卷的【符号链接】，
+# `node_modules/` 只匹配目录，符号链接会被漏过去并提交成死链。
+node_modules
+
+# Generated artifacts
+build/
+dist/
+out/
+coverage/
+*.log
+
+# Local runtime data (never commit: 日报与凭证属于用户本机)
+.bili-scroll/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Editor files
+.vscode/
+.idea/
