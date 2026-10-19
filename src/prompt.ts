@@ -21,6 +21,8 @@ export interface RunPromptInput {
   reportDetail: ReportDetail;
   /** 人设工作区；null = 不读设定 */
   workdir: string | null;
+  /** 从 workdir/AGENTS.md 读到的正文；null/缺省 = 没有可用人设 */
+  persona?: { path: string; content: string; truncated?: boolean } | null;
   /** 家目录 */
   home: string;
 }
@@ -43,10 +45,24 @@ export function buildRunPrompt(input: RunPromptInput): string {
     `- 日报详细程度：${reportDetail}${writeReport ? "" : "（本轮不写日报文件）"}`,
   ];
   if (writeReport) bullets.push(`- 日报写到：${report}`);
+  const personaBlock = input.persona
+    ? [
+        "",
+        `## 你的人设（来自 ${input.persona.path}）`,
+        "",
+        "下面这段是用户为你写好的角色设定，**必须按它说话**，与本轮任何默认语气冲突时以它为准：",
+        "",
+        input.persona.content,
+        input.persona.truncated ? "" : "",
+      ].join("\n")
+    : null;
+
   bullets.push(
-    workdir
-      ? `- 人设工作区：${workdir}（有 AGENTS.md 时按那里的语气说话）`
-      : "- 人设工作区：未设置（按中性语气说话）",
+    personaBlock
+      ? `- 人设：已加载（见下方「你的人设」一节）`
+      : workdir
+        ? `- 人设工作区：${workdir}（里面没有可用的 AGENTS.md，按中性语气说话）`
+        : "- 人设：未设置（按中性语气说话）",
     `- 家目录：${home}`,
   );
 
@@ -64,6 +80,7 @@ export function buildRunPrompt(input: RunPromptInput): string {
     ...bullets,
     "",
     body,
+    personaBlock ?? "",
     "",
     "---",
     "",

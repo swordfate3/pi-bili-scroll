@@ -114,7 +114,22 @@ npm install --save-exact @xzxzzx/bilibili-mcp@1.14.3 --ignore-scripts
 | `perDay` | `5` | 每天最多挑几条 |
 | `reportDetail` | `"brief"` | `full` / `brief` / `none` |
 | `notifyOnStart` | `true` | 会话开始提示"今天还没刷" |
-| `workdir` | `null` | 有 `AGENTS.md` 的工作区路径，用来按你的人设说话；`null` = 不读设定 |
+| `workdir` | `null` | 人设目录：扩展会读 `<workdir>/AGENTS.md` 并**内联进提示词**；`null` = 按中性语气 |
+
+### 人设（角色）
+
+想让巡检用特定角色说话，就在某个目录放一份 `AGENTS.md`，把 `workdir` 指向它：
+
+```
+~/.local/share/bili-scroll/persona/AGENTS.md   ← 角色设定
+config.json: { "workdir": "/home/node/.local/share/bili-scroll/persona" }
+```
+
+**扩展会把这份文件读进来内联**，不是只把路径丢给模型 —— 只给路径等于赌模型会不会去看，
+实测常被忽略（设了人设但语气没变就是这个原因）。文件超过 16 KB 会截断并如实标注。
+
+包内自带一份可直接用的初版角色（B 站内容编辑：默认不信标题、优先一手、宁可少一条）。
+想调语气就改这个文件，**不用动代码、不用重装**。
 
 字段类型不对时**逐字段回退到默认值**并在提示里说明，不会因为一个坏字段整体失效。
 

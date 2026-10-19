@@ -48,13 +48,35 @@ test("关键词为空时回退到内置几组", () => {
 
 test("workdir 未设置时明确说按中性语气，不留白让模型去猜", () => {
   const withoutWorkdir = buildRunPrompt({ ...base, reportDetail: "brief" });
-  assert.ok(withoutWorkdir.includes("人设工作区：未设置（按中性语气说话）"));
+  assert.ok(withoutWorkdir.includes("人设：未设置（按中性语气说话）"));
   const withWorkdir = buildRunPrompt({ ...base, reportDetail: "brief", workdir: "/workspace" });
   assert.ok(withWorkdir.includes("人设工作区：/workspace"));
-  assert.ok(!withWorkdir.includes("未设置（按中性语气说话）"));
+  assert.ok(!withWorkdir.includes("人设：未设置"));
 });
 
 test("perDay=0 也照实传达（0 表示只手动跑）", () => {
   const prompt = buildRunPrompt({ ...base, perDay: 0, reportDetail: "brief" });
   assert.ok(prompt.includes("- 每天最多挑：0 条"));
+});
+
+test("给了人设就把正文内联进请求，而不是只给路径", () => {
+  const persona = { path: "/x/AGENTS.md", content: "# 角色：编辑\n宁可少一条，不要凑一条。" };
+  const prompt = buildRunPrompt({ ...base, reportDetail: "brief", persona });
+  assert.ok(prompt.includes("## 你的人设（来自 /x/AGENTS.md）"));
+  assert.ok(prompt.includes("宁可少一条，不要凑一条"));
+  assert.ok(prompt.includes("必须按它说话"));
+  assert.ok(prompt.includes("- 人设：已加载"));
+  // 不应该再出现"按那个路径去看设定"这种软提示
+  assert.ok(!prompt.includes("有 AGENTS.md 时按那里的语气说话"));
+});
+
+test("workdir 设了但没读到文件时，明确告知按中性语气且不假装有设定", () => {
+  const prompt = buildRunPrompt({ ...base, reportDetail: "brief", workdir: "/x", persona: null });
+  assert.ok(prompt.includes("里面没有可用的 AGENTS.md，按中性语气说话"));
+  assert.ok(!prompt.includes("## 你的人设"));
+});
+
+test("都没设置时按中性语气", () => {
+  const prompt = buildRunPrompt({ ...base, reportDetail: "brief" });
+  assert.ok(prompt.includes("- 人设：未设置（按中性语气说话）"));
 });

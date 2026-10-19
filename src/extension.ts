@@ -28,6 +28,7 @@ import {
   writeCredential,
   type QrSession,
 } from "./login.js";
+import { readPersona } from "./persona.js";
 import { buildRunPrompt, effectiveKeywords } from "./prompt.js";
 import { waitForRound } from "./round.js";
 
@@ -205,6 +206,12 @@ export default function (pi: ExtensionAPI) {
         say(ctx, `今天已经刷过了（${snap.report}）。这一轮会是第二遍。`, "warning");
       }
 
+      // 人设必须"读进来内联"，只给路径等于赌模型会不会去看 —— 实测常被忽略。
+      const persona = await readPersona(snap.config.workdir);
+      if (snap.config.workdir && !persona) {
+        say(ctx, `人设工作区 ${snap.config.workdir} 里没有可用的 AGENTS.md，本轮按中性语气。`, "warning");
+      }
+
       const prompt = buildRunPrompt({
         charter,
         day: snap.day,
@@ -213,6 +220,7 @@ export default function (pi: ExtensionAPI) {
         perDay: snap.config.perDay,
         reportDetail: snap.config.reportDetail,
         workdir: snap.config.workdir,
+        persona,
         home: snap.paths.home,
       });
 
