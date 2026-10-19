@@ -118,12 +118,23 @@ npm install --save-exact @xzxzzx/bilibili-mcp@1.14.3 --ignore-scripts
 
 ### 人设（角色）
 
-想让巡检用特定角色说话，就在某个目录放一份 `AGENTS.md`，把 `workdir` 指向它：
+角色有**两个入口、一份文本**：
+
+| 入口 | 用法 | 作用范围 |
+|---|---|---|
+| pi prompt 模板 `/bili` | 敲 `/bili 看看 BV1xxx 值不值得看` | 当前会话，按角色回答 |
+| 巡检自动注入 | `/bili-scroll` 自动带上 | 只影响那一轮 |
+
+文本放在 **pi 的标准位置**：`~/.pi/agent/prompts/bili.md`（带 frontmatter，同时是 `/bili` 命令）。
+扩展通过软链读同一份：
 
 ```
-~/.local/share/bili-scroll/persona/AGENTS.md   ← 角色设定
+~/.local/share/bili-scroll/persona/AGENTS.md  →  ~/.pi/agent/prompts/bili.md
 config.json: { "workdir": "/home/node/.local/share/bili-scroll/persona" }
 ```
+
+**改那一份，两个入口同时生效**，不用动代码、不用重装。扩展读的时候会自动剥掉
+YAML frontmatter（那是给命令补全看的，不该进提示词正文）。
 
 **扩展会把这份文件读进来内联**，不是只把路径丢给模型 —— 只给路径等于赌模型会不会去看，
 实测常被忽略（设了人设但语气没变就是这个原因）。文件超过 16 KB 会截断并如实标注。

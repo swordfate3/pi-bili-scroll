@@ -9,6 +9,7 @@
  */
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { stripFrontmatter } from "./charter.js";
 
 /** 人设文件上限：再长就不是人设，而是文档 —— 截断并如实告知。 */
 export const PERSONA_MAX_CHARS = 16_000;
@@ -34,7 +35,9 @@ export async function readPersona(workdir: string | null): Promise<Persona | nul
   } catch {
     return null;
   }
-  const trimmed = raw.trim();
+  // 人设可以直接复用 pi 的 prompt 模板（那样一份文本两处用），
+  // 所以先剥掉模板自己的 YAML frontmatter —— 那是给命令补全看的，不该进提示词正文。
+  const trimmed = stripFrontmatter(raw).trim();
   if (!trimmed) return null;
   if (trimmed.length > PERSONA_MAX_CHARS) {
     return { path, content: `${trimmed.slice(0, PERSONA_MAX_CHARS)}\n\n…（人设文件过长，已截断）`, truncated: true };

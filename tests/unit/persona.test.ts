@@ -56,3 +56,37 @@ test("超长人设被截断并标记，避免把提示词撑爆", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("人设可以直接是 pi 的 prompt 模板：frontmatter 会被剥掉", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "persona-"));
+  try {
+    await writeFile(
+      join(dir, "AGENTS.md"),
+      "---\ndescription: 某角色\nargument-hint: \"[x]\"\n---\n# 角色\n语气中性。\n",
+    );
+    const persona = await readPersona(dir);
+    assert.ok(persona);
+    assert.ok(!persona?.content.includes("description:"));
+    assert.ok(!persona?.content.includes("argument-hint:"));
+    assert.ok(!persona?.content.startsWith("---"));
+    assert.ok(persona?.content.startsWith("# 角色"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("软链到别处的人设文件也能读（扩展与 pi 模板共用一份）", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "persona-"));
+  try {
+    const real = join(dir, "real-bili.md");
+    await writeFile(real, "---\ndescription: x\n---\n# 共用角色\n");
+    const linkDir = join(dir, "link");
+    await mkdir(linkDir, { recursive: true });
+    const { symlink } = await import("node:fs/promises");
+    await symlink(real, join(linkDir, "AGENTS.md"));
+    const persona = await readPersona(linkDir);
+    assert.ok(persona?.content.includes("# 共用角色"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
