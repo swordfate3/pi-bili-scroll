@@ -3,6 +3,15 @@
 本目录是**独立 git 仓库**（与 `pi-project-architect`、`pi-web-ui` 等兄弟项目一致），
 不是 `/workspace` 那一个仓的子目录。本地开发，暂无远端。
 
+## 发版规矩
+
+- `CHANGELOG.md` 必须与版本号同步：**每次 bump 版本就补一节**，写"改了什么"，
+  不写"为什么"（那属于 `DECISIONS.md`）。
+- 守语义化版本：`feat` → MINOR，`fix` → PATCH，不兼容 → MAJOR。
+  ⚠️ 1.2.1 是 `feat` 却只 bump 了 PATCH，属历史遗留，从 1.3.0 起按规矩来。
+- 顺序：改代码 → `npm run check` → 改 CHANGELOG → bump 版本 → commit → push →
+  `pi update git:github.com/swordfate3/pi-bili-scroll` → 重启/`/reload` 才在真机生效。
+
 ## 改完必须做
 
 ```bash

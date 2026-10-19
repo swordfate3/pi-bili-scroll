@@ -191,3 +191,21 @@ test("真实执行工具：bili_scroll_status 能跑通并返回结构化结果"
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("CHANGELOG 存在，且当前版本在其中有对应小节", async () => {
+  // 版本号与改动记录必须对得上 —— 否则"1.2.1 和 1.2.2 差在哪"就只能去翻 git log。
+  const { readFile } = await import("node:fs/promises");
+  const packagePath = join(dirname(fileURLToPath(import.meta.url)), "../..");
+  const manifest = JSON.parse(await readFile(join(packagePath, "package.json"), "utf8")) as {
+    version: string;
+    files: string[];
+  };
+
+  assert.ok(manifest.files.includes("CHANGELOG.md"), "package.json 的 files 必须含 CHANGELOG.md");
+
+  const changelog = await readFile(join(packagePath, "CHANGELOG.md"), "utf8");
+  assert.ok(
+    changelog.includes(`## [${manifest.version}]`),
+    `CHANGELOG 里必须有一节对应当前版本 ${manifest.version}`,
+  );
+});

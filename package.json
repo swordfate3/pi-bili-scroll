@@ -35,6 +35,7 @@
     "src",
     "resources",
     "mcp.json",
+    "CHANGELOG.md",
     "README.md",
     "ARCHITECTURE.md",
     "DECISIONS.md",
