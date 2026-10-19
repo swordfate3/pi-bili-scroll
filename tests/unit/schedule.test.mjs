@@ -146,3 +146,15 @@ test("notifyTelegram：底层抛错也收敛成 sent:false", async () => {
 test("minutesOfDay 用本地时间", () => {
   assert.equal(minutesOfDay(new Date(2026, 9, 19, 20, 30)), 1230);
 });
+
+test("shouldRun：今天已有报告就不再跑（即使到点、即使没 fired）", () => {
+  // 这是修复过的缺陷：之前 reportExists 写在提前 return 之后，等于没生效，
+  // 会让"手动跑过一次"的日子到点又跑一遍。
+  const now = new Date(2026, 9, 19, 21, 0);
+  const state = { date: dayKey(now), at: 1200, fired: false, skip: false };
+  const r = shouldRun(state, now, { reportExists: () => true });
+  assert.equal(r.due, false);
+  assert.match(r.why, /已经有报告/);
+  // 没有报告时才该跑
+  assert.equal(shouldRun(state, now, { reportExists: () => false }).due, true);
+});

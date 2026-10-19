@@ -94,14 +94,18 @@ export function shouldRun(state, now = new Date(), options = {}) {
   const { catchUp = true, reportExists = () => false } = options;
   if (!state || state.date !== dayKey(now)) return { due: false, why: "今天还没做计划" };
   if (state.skip) return { due: false, why: state.reason ?? "今天选择不看" };
+  if (state.fired) return { due: false, why: "今天这轮已经跑过" };
+
+  // ⚠️ 报告已经存在 = 今天已经有结果（可能是手动跑的）。
+  //    一轮就是一轮：不因为"到点了"就再跑一遍 —— 之前这个参数写在提前 return 之后，
+  //    等于完全没生效，会让同一天跑两轮、白烧一次额度。
+  if (reportExists(now)) return { due: false, why: "今天已经有报告，不重复跑" };
+
   const nowMin = minutesOfDay(now);
   const at = Number(state.at);
   if (!Number.isFinite(at)) return { due: false, why: "计划里没有有效时刻" };
-  if (state.fired) return { due: false, why: "今天这轮已经跑过" };
   if (nowMin >= at) return { due: true, why: `到点（计划 ${fmt(at)}，现在 ${fmt(nowMin)}）` };
-  if (catchUp && reportExists(now) === false && nowMin >= at) {
-    return { due: true, why: "补跑：今天还没有报告" };
-  }
+  if (catchUp) return { due: false, why: `还没到点（计划 ${fmt(at)}）` };
   return { due: false, why: `还没到点（计划 ${fmt(at)}）` };
 }
 
