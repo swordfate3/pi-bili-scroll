@@ -21,3 +21,7 @@ coverage/
 # Editor files
 .vscode/
 .idea/
+
+# Python 缓存（vendor 里的脚本编译产物）
+__pycache__/
+*.pyc
