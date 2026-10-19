@@ -52,7 +52,7 @@ bili_taste_record({
   bvid, picked: true/false,
   tags: ["实测", "ai"],        // 3-6 个，用你自己的分类词，别照抄标题
   score: 0-5,                  // 你的打分
-  source: "一手" | "二手",
+  source: "一手" | "二手" | "不明",   // 必填！一手=作者自己在做，二手=转述/搬运
   kind: "教程" | "访谈" | "课程" | "MV" | "杂谈",
   durationMin, views,
   reason: "一句话说清为什么"     // ≤200 字

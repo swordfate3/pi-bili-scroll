@@ -545,7 +545,12 @@ export default function (pi: ExtensionAPI) {
         picked: Type.Boolean(),
         tags: Type.Optional(Type.Array(Type.String({ maxLength: 32 }), { maxItems: 12 })),
         score: Type.Optional(Type.Number({ minimum: 0, maximum: 5 })),
-        source: Type.Optional(Type.String({ maxLength: 8 })),
+        // ⚠️ 必填：实测第一轮有 8 条没填，全落到"不明"，统计里看着像"讨厌来源不明
+        // 的内容"，其实只是记录时偷懒 —— 那是记录偏差，不是偏好。
+        source: Type.Union(
+          [Type.Literal("一手"), Type.Literal("二手"), Type.Literal("不明")],
+          { description: "一手=作者自己在做；二手=转述/搬运；确实判断不了才填不明" },
+        ),
         kind: Type.Optional(Type.String({ maxLength: 8 })),
         durationMin: Type.Optional(Type.Number({ minimum: 0, maximum: 100000 })),
         views: Type.Optional(Type.Number({ minimum: 0 })),
@@ -555,8 +560,7 @@ export default function (pi: ExtensionAPI) {
     ),
     async execute(_id, params) {
       const home = pathsFor().home;
-      const source =
-        params.source === "一手" || params.source === "二手" ? (params.source as "一手" | "二手") : "不明";
+      const source = params.source as "一手" | "二手" | "不明";
       await appendObservation(home, {
         at: new Date().toISOString(),
         bvid: params.bvid,
