@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { READ_COMMANDS, WRITE_COMMANDS, isKnownCommand, isWriteCommand, runWhale } from "../../src/whale.js";
+import { READ_COMMANDS, WRITE_COMMANDS, isDryRunArgs, isKnownCommand, isWriteCommand, runWhale } from "../../src/whale.js";
 
 test("只读命令不触发确认闸门", () => {
   for (const cmd of ["search", "subtitles", "debrief", "deps", "quota", "diary", "thread"]) {
@@ -39,4 +39,17 @@ test("runWhale 对未知命令返回 ok:false 而不是抛异常", async () => {
   const result = await runWhale("no-such-command");
   assert.equal(result.ok, false);
   assert.ok(result.exitCode !== 0);
+});
+
+test("--dry / --status 属于预览，不该触发确认", () => {
+  // 曾因只按命令名判定，连 `dm --dry` 都弹确认框：用户为"预览"点同意，
+  // 会训练出闭眼确认的习惯，反而削弱闸门。
+  assert.equal(isDryRunArgs(["--dry"]), true);
+  assert.equal(isDryRunArgs(["--status"]), true);
+  assert.equal(isDryRunArgs(["--check"]), true);
+  assert.equal(isDryRunArgs(["--msg", "hi", "--dry"]), true);
+  // 真发的参数不算预览
+  assert.equal(isDryRunArgs(["--go"]), false);
+  assert.equal(isDryRunArgs(["--msg", "hi", "--go"]), false);
+  assert.equal(isDryRunArgs([]), false);
 });

@@ -72,6 +72,19 @@ export function isWriteCommand(command: string): boolean {
   return true;
 }
 
+/**
+ * 这些参数表示"只预览/只看状态"，命令本身不会对外发送任何东西。
+ * ⚠️ 用命令名一刀切会把 `dm --dry` 也拦下来 —— 让人为"预览"点确认，
+ * 结果就是训练出闭眼点"同意"的习惯，反而削弱闸门。所以这里放行。
+ * 安全性由工具自己保证：whale 的写命令强制 `--dry` 与 `--go` 二选一，
+ * 给了 `--dry` 就一定不发。
+ */
+export const NOOP_FLAGS = new Set(["--dry", "--status", "--check"]);
+
+export function isDryRunArgs(args: readonly string[] = []): boolean {
+  return args.some((a) => NOOP_FLAGS.has(a));
+}
+
 export function isKnownCommand(command: string): boolean {
   return (
     (READ_COMMANDS as readonly string[]).includes(command) ||

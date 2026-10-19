@@ -38,7 +38,7 @@ import {
 } from "./login.js";
 import { sendComment, type MentionTarget } from "./comment.js";
 import { readPersona } from "./persona.js";
-import { isKnownCommand, isWriteCommand, runWhale, READ_COMMANDS, WRITE_COMMANDS } from "./whale.js";
+import { isDryRunArgs, isKnownCommand, isWriteCommand, runWhale, READ_COMMANDS, WRITE_COMMANDS } from "./whale.js";
 import { buildRunPrompt, effectiveKeywords } from "./prompt.js";
 import { waitForRound } from "./round.js";
 
@@ -614,6 +614,8 @@ export default function (pi: ExtensionAPI) {
       const command = String((input as { command?: unknown })?.command ?? "").trim();
       if (!isWriteCommand(command)) return;
       const args = ((input as { args?: unknown })?.args ?? []) as unknown;
+      // `--dry` / `--status` 不会对外发送任何东西，不该让人为预览点确认。
+      if (Array.isArray(args) && isDryRunArgs(args as string[])) return;
       const preview = `${command} ${Array.isArray(args) ? args.join(" ") : ""}`.trim();
       if (!ctx.hasUI) {
         return {
