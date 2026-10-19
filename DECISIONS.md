@@ -409,13 +409,20 @@ whale 的 `watch-video` 用 ffmpeg 的 `scene` 过滤器挑变化点、再 `tile
 **教训：** 「模型做对了事」和「产物落到该落的地方」是两件事。前者靠提示词，后者靠**确定性注入**
 （命令里写死路径），不能指望模型自己推断。
 
-## 29. 只读服务器已失效，改用 whale 的工具
+## 29. 优先 whale 工具（理由更正过）
 
-**状态：** 已采纳（2026-10-19）
+**状态：** 已采纳并更正（2026-10-19，原结论错误）
 
-**实测：** `@xzxzzx/bilibili-mcp@1.14.3` 的 `search_bilibili_videos` 返回
-`UPSTREAM_RESPONSE_INVALID`（"The remote service returned an invalid bounded response"），
-而同一时刻 `bili_whale search` 正常返回 20 条。B站改了响应格式，读服务器没跟上。
+**原始错误结论：** 我曾写「只读服务器 `@xzxzzx/bilibili-mcp@1.14.3` 已失效，B站改了响应格式」。
+依据是连着两次 `UPSTREAM_RESPONSE_INVALID`。
+
+**更正：** 之后连测 5 次全部正常。查源码定位到真实机制：该错误由 `bounded-response.js` 抛出，
+条件是 content-length 非法 / **响应体为空** / UTF-8 非法 / **JSON 解析失败**；
+而全包**没有 `-412`/`-509` 的处理**，所以 B站 **412 风控**（空体或 HTML）会被统一报成
+"无效响应"，还标了 `retryable: false` —— **上游只是临时拦截，错误文案把这件事藏了**。
+
+**读错误也读错了：** 那个 `retryable: false` 我当成了"永久"，而它的 next_steps 明明写着
+"如果上游响应异常是临时问题，请稍后重试"。**看错误码不看 next_steps，是这次误判的直接原因。**
 
 **决定：** SKILL 里写明**优先 `bili_whale`**（search/subtitles/debrief/comment-digest），
 `mcp` 工具作备用；两条都失败就如实报错、**不写日报**（不把失败伪装成"这轮没值得看的"）。
