@@ -167,6 +167,42 @@ node scripts/setup-mcp-write.mjs
 2. 扩展里的 `tool_call` 钩子——真正发出前**必须用户在弹窗里确认**；无 UI 模式（print/JSON）
    **一律拒绝**（fail closed），不会因为"没有界面"就默许。
 
+## 全功能工具集（vendor 自 dsh-bili-whale）
+
+除了上面的巡检命令行，本包还 vendor 了
+[`Alterssss/dsh-bili-whale`](https://github.com/Alterssss/dsh-bili-whale)（MIT）的整套工具（**46 个命令**），
+通过一个工具暴露：`bili_whale({ command, args })`。
+
+准备（一次性，把凭证接过来）：
+
+```bash
+node scripts/setup-whale.mjs     # 建 ~/.bili-ai/credentials.json → 我们凭证的软链
+```
+
+| 类别 | 命令 |
+|---|---|
+| 读 | `session` `thread` `search` `subtitles` `video` `debrief` `watch-video` `feed` `quota` `diary` `likes` `deps` `covers` `whois` `comment-digest` `check-comment` `check-dynamic` `check-mention` `recon` `watch` `comment-await` |
+| 写（需确认） | `comment` `comment-del` `dm` `dynamic` `dynamic-image` `dynamic-edit` `danmaku` `reply-draft` `await` `dm-await` |
+
+最值得说的两条：
+
+- **`watch-video <BV> [3x3\|4x4]`** —— 真"看"画面：取直链 → 下载 → ffmpeg 按等间隔骨架 + 画面变化点抽帧 → 拼九宫格，交给模型看图。**需要 ffmpeg**（见下）。
+- **`debrief <BV>`** —— 一条龙读懂：封面 + 简介 + 官方字幕 + 弹幕热区 + 热评 + 抽帧。
+
+### 装 ffmpeg（只有抽帧要它）
+
+容器里没有 root，用静态构建放到持久卷：
+
+```bash
+curl -sL -o /tmp/ff.tar.xz https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
+tar -xJf /tmp/ff.tar.xz -C /tmp
+mkdir -p ~/.local/share/bili-scroll/bin
+cp /tmp/ffmpeg-*/bin/ffmpeg ~/.local/share/bili-scroll/bin/ && chmod +x ~/.local/share/bili-scroll/bin/ffmpeg
+ln -sfn ~/.local/share/bili-scroll/bin/ffmpeg ~/.local/bin/ffmpeg
+```
+
+装完跑 `bili_whale deps` 复检，四项应全绿。
+
 ## 它不做什么
 
 | 不做 | 原因 |

@@ -51,6 +51,8 @@ npm run check      # typecheck + 28 个测试，必须全绿
   无 UI 模式一律拒绝。**不要为了"方便"扩大白名单**，见 `DECISIONS.md` 18/19。
 - **不常驻、不定时**：Pi 是按次启动的，定时只能靠外部 cron，见 `DECISIONS.md` 6。
 - **不自动跑**：`session_start` 只提示，绝不自动发起模型轮次，见 `DECISIONS.md` 7。
+- `vendor/bili-whale/` 是上游 MIT 代码，**尽量不改**；对接层全部在 `src/whale.ts`
+  （命令分类 + 分发 + 输出截断）。上游更新时整目录替换即可。
 - 人设（`workdir/AGENTS.md`）由 `src/persona.ts` **读进来内联**进提示词，不是只给路径。
   这是踩过的坑：只给路径时模型常常不去读，表现为"设了人设但语气没变"。
 - 登录相关（申请二维码、轮询、写凭证、删二维码）都在 `src/login.ts`；它**自己走官方扫码接口**，

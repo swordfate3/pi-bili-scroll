@@ -30,6 +30,7 @@ import {
   type QrSession,
 } from "./login.js";
 import { readPersona } from "./persona.js";
+import { isKnownCommand, isWriteCommand, runWhale, READ_COMMANDS, WRITE_COMMANDS } from "./whale.js";
 import { buildRunPrompt, effectiveKeywords } from "./prompt.js";
 import { waitForRound } from "./round.js";
 
@@ -259,6 +260,41 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+
+  pi.registerTool({
+    name: "bili_whale",
+    label: "B站工具集（dsh-bili-whale 全功能）",
+    description:
+      "调用 dsh-bili-whale 工具集（MIT，vendor 自 Alterssss/dsh-bili-whale）的 46 个命令：读——session/thread/search/subtitles/video/debrief/watch-video(抽帧)/feed/quota/diary/likes/deps 等；写——comment/reply-draft/dm/dynamic/danmaku 等。写命令会在真正执行前要求用户确认；无 UI 模式一律拒绝。抽帧需要 ffmpeg。",
+    promptSnippet: "bili_whale: 调 dsh-bili-whale 工具集（46 个命令，读写都有，写需确认）",
+    parameters: Type.Object(
+      {
+        command: Type.String({ maxLength: 40 }),
+        args: Type.Optional(Type.Array(Type.String({ maxLength: 4096 }), { maxItems: 40 })),
+        timeoutMs: Type.Optional(Type.Number({ maximum: 600_000 })),
+      },
+      { additionalProperties: false },
+    ),
+    async execute(_id, params) {
+      const command = String(params.command ?? "").trim();
+      if (!isKnownCommand(command)) {
+        const details = {
+          ok: false,
+          error: `未知命令「${command}」`,
+          readCommands: [...READ_COMMANDS],
+          writeCommands: [...WRITE_COMMANDS],
+        };
+        return jsonResult(details);
+      }
+      const result = await runWhale(command, params.args ?? [], { timeoutMs: params.timeoutMs });
+      const details = {
+        ...result,
+        write: isWriteCommand(command),
+      };
+      return jsonResult(details);
+    },
+  });
+
   pi.registerCommand("bili-login", {
     description: "扫码登录 B 站：把二维码存成 PNG 并给出路径，登录成功后自动删除二维码。",
     async handler(_args: string, ctx: ExtensionCommandContext) {
@@ -412,6 +448,29 @@ export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
     const toolName = String(event.toolName ?? "");
     const input = event.input as unknown;
+
+    // ① dsh-bili-whale 工具集的写命令（comment / dm / dynamic / danmaku / reply-draft …）
+    if (toolName === "bili_whale") {
+      const command = String((input as { command?: unknown })?.command ?? "").trim();
+      if (!isWriteCommand(command)) return;
+      const args = ((input as { args?: unknown })?.args ?? []) as unknown;
+      const preview = `${command} ${Array.isArray(args) ? args.join(" ") : ""}`.trim();
+      if (!ctx.hasUI) {
+        return {
+          block: true,
+          reason:
+            `已阻止 B 站写操作（bili_whale ${command}）：必须由用户确认，当前为无 UI 模式（${ctx.mode}），按 fail-closed 拒绝。`,
+        };
+      }
+      const approved = await ctx.ui.confirm(
+        "确认执行 B 站写操作？",
+        `命令：${preview.slice(0, 400)}\n\n这会用你已登录的 B 站账号对外发布，可能无法撤回。`,
+      );
+      if (!approved) return { block: true, reason: "用户拒绝了这次 B 站写操作。" };
+      return;
+    }
+
+    // ② 单独的 bili_reply（读服务器之外的写服务器）
     if (!isWriteInvocation(toolName, input)) return;
 
     const text = findText(input);

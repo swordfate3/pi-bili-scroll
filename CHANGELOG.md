@@ -7,6 +7,27 @@
 > 设计取舍写在 [`DECISIONS.md`](./DECISIONS.md)，用法写在 [`README.md`](./README.md)，
 > 这里只回答一个问题：**这一版和上一版差在哪。**
 
+## [1.3.0] — 2026-10-19
+
+### 新增
+- **vendor `dsh-bili-whale` 全功能工具集**（MIT，`Copyright (c) 2026 ALTERSSSS`）：
+  53 个文件、46 个命令，原样放进 `vendor/bili-whale/tools/`，不改其源码。
+- **`bili_whale({ command, args })` 工具**：一次调用分发到那 46 个命令，读写都通。
+  对接层全在 `src/whale.ts`（命令分类、`execFile` 分发、20K 输出截断）。
+- **凭证对接**：`scripts/setup-whale.mjs` 建软链
+  `~/.bili-ai/credentials.json → ~/.bilibili-mcp/config.json` —— 两边字段名对得上
+  （sessdata / bili_jct），换账号后自动同步。上游把路径写死，软链是不改源码的唯一对接方式。
+- **抽帧看画面真的通了**：装 ffmpeg 静态构建到持久卷后，`watch-video` 取直链 → 下载 →
+  按等间隔骨架 + 画面变化点抽帧 → 拼九宫格，模型直接看图。实测 720P 视频取 9 帧用时约 1 分钟。
+
+### 安全
+- 写命令（`comment` / `comment-del` / `dm` / `dynamic` / `danmaku` / `reply-draft` 等）
+  在 `tool_call` 里要求用户确认；**未知命令按写处理**（fail closed），不会因为拼错名字就默认放行。
+- 无 UI 模式（print/JSON）一律拒绝写命令。
+
+### 已就绪的自检
+`bili_whale deps` 四项全绿：B站 cookie（已登录 小小deepseek）、ffmpeg、Node、数据目录可写。
+
 ## [1.2.2] — 2026-10-19
 
 ### 修复

@@ -1,6 +1,6 @@
 {
   "name": "pi-bili-scroll",
-  "version": "1.2.2",
+  "version": "1.3.0",
   "description": "Pi 包：每天替你刷一轮 B 站 —— 读字幕原文挑出值得的、写一份日报。一条命令 + 判据 skill + 自带的 B 站 MCP 声明，装一个包即可用。",
   "type": "module",
   "license": "MIT",
@@ -40,7 +40,8 @@
     "ARCHITECTURE.md",
     "DECISIONS.md",
     "LICENSE",
-    "scripts"
+    "scripts",
+    "vendor"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
