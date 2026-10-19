@@ -49,6 +49,14 @@ export interface BiliScrollConfig {
   maxReadsPerRound: number;
   /** 一轮内"重读"（下载视频/抽帧）的上限 */
   maxHeavyReadsPerRound: number;
+  /** 是否启用插件自己的口味/性格（只作用于 /bili-scroll 轮次） */
+  tasteEnabled: boolean;
+  /** 某类标签至少被看到几次才允许进入偏好 */
+  tasteMinSample: number;
+  /** 观察的时间衰减半衰期（天），防"最近看多了就固化" */
+  tasteHalfLifeDays: number;
+  /** 攒够多少条观察触发一次反思 */
+  tasteReflectEvery: number;
 }
 
 export const DEFAULT_CONFIG: BiliScrollConfig = {
@@ -66,6 +74,10 @@ export const DEFAULT_CONFIG: BiliScrollConfig = {
   timezone: "Asia/Shanghai",
   maxReadsPerRound: 10,
   maxHeavyReadsPerRound: 2,
+  tasteEnabled: true,
+  tasteMinSample: 8,
+  tasteHalfLifeDays: 14,
+  tasteReflectEvery: 10,
 };
 
 const REPORT_DETAILS: readonly ReportDetail[] = ["full", "brief", "none"];
@@ -166,6 +178,9 @@ export function normalizeConfig(raw: unknown): { config: BiliScrollConfig; notic
     "sameVideoCooldownDays",
     "maxReadsPerRound",
     "maxHeavyReadsPerRound",
+    "tasteMinSample",
+    "tasteHalfLifeDays",
+    "tasteReflectEvery",
   ] as const) {
     const value = record[key];
     if (value === undefined) continue;
@@ -174,6 +189,11 @@ export function normalizeConfig(raw: unknown): { config: BiliScrollConfig; notic
     } else {
       notices.push(`${key} 不是非负整数，已用默认值 ${DEFAULT_CONFIG[key]}。`);
     }
+  }
+
+  if (record.tasteEnabled !== undefined) {
+    if (isBoolean(record.tasteEnabled)) config.tasteEnabled = record.tasteEnabled;
+    else notices.push("tasteEnabled 不是布尔值，已用默认值 true。");
   }
 
   if (record.timezone !== undefined) {

@@ -23,6 +23,8 @@ export interface RunPromptInput {
   workdir: string | null;
   /** 从 workdir/AGENTS.md 读到的正文；null/缺省 = 没有可用人设 */
   persona?: { path: string; content: string; truncated?: boolean } | null;
+  /** 插件自己长出来的口味块（只在巡检轮次注入，不进全局） */
+  taste?: string | null;
   /** 家目录 */
   home: string;
 }
@@ -80,6 +82,7 @@ export function buildRunPrompt(input: RunPromptInput): string {
     ...bullets,
     "",
     body,
+    input.taste ? `\n${input.taste}` : "",
     personaBlock ?? "",
     "",
     "---",

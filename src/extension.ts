@@ -40,6 +40,18 @@ import { sendComment, type MentionTarget } from "./comment.js";
 import { readPersona } from "./persona.js";
 import { checkQuota, loadQuota, pruneState, quotaPath, recordComment, saveQuota } from "./quota.js";
 import { classifyRead, checkRead, settleRead, EMPTY_COUNTER, DEFAULT_READ_LIMITS, type ReadCounter, type ReadKind } from "./readlimit.js";
+import {
+  appendObservation,
+  appendReflection,
+  buildTasteBlock,
+  computeStats,
+  deriveTraits,
+  loadTraits,
+  normalizeTags,
+  readObservations,
+  saveTraits,
+  DEFAULT_TRAITS,
+} from "./taste.js";
 import { isDryRunArgs, isKnownCommand, isWriteCommand, runWhale, READ_COMMANDS, WRITE_COMMANDS } from "./whale.js";
 import { buildRunPrompt, effectiveKeywords } from "./prompt.js";
 import { waitForRound } from "./round.js";
@@ -284,6 +296,16 @@ export default function (pi: ExtensionAPI) {
         say(ctx, `人设工作区 ${snap.config.workdir} 里没有可用的 AGENTS.md，本轮按中性语气。`, "warning");
       }
 
+      // 口味块：只在这一轮注入，不进全局 AGENTS.md、不进系统提示词。
+      let tasteBlock: string | null = null;
+      if (snap.config.tasteEnabled) {
+        const observations = await readObservations(snap.paths.home);
+        const stats = computeStats(observations, new Date(), snap.config.tasteHalfLifeDays);
+        const snapshot = await loadTraits(snap.paths.home);
+        const traits = snapshot?.traits ?? deriveTraits(stats, observations, snap.config.tasteMinSample);
+        tasteBlock = stats.total > 0 ? buildTasteBlock(stats, traits, { minSample: snap.config.tasteMinSample }) : null;
+      }
+
       const prompt = buildRunPrompt({
         charter,
         day: snap.day,
@@ -293,6 +315,7 @@ export default function (pi: ExtensionAPI) {
         reportDetail: snap.config.reportDetail,
         workdir: snap.config.workdir,
         persona,
+        taste: tasteBlock,
         home: snap.paths.home,
       });
 
@@ -505,6 +528,116 @@ export default function (pi: ExtensionAPI) {
         await saveQuota(quotaFile, recordComment(state, params.bvid, now));
       }
       return jsonResult({ ...result, at, remainingToday: Math.max(0, (decision.remainingToday ?? 1) - 1) });
+    },
+  });
+
+
+  pi.registerTool({
+    name: "bili_taste_record",
+    label: "记录一条口味观察",
+    description:
+      "记录一条「我看到了什么、挑没挑、为什么」。这是插件偏好与性格的**唯一数据来源** —— 没记就等于没看过。每判断完一条视频就调一次，不论挑中还是跳过。只写本地文件，不联网。",
+    promptSnippet: "bili_taste_record: 记录一条看过的视频（挑没挑+理由），偏好靠它长出来",
+    annotations: { readOnlyHint: false },
+    parameters: Type.Object(
+      {
+        bvid: Type.String({ maxLength: 32 }),
+        picked: Type.Boolean(),
+        tags: Type.Optional(Type.Array(Type.String({ maxLength: 32 }), { maxItems: 12 })),
+        score: Type.Optional(Type.Number({ minimum: 0, maximum: 5 })),
+        source: Type.Optional(Type.String({ maxLength: 8 })),
+        kind: Type.Optional(Type.String({ maxLength: 8 })),
+        durationMin: Type.Optional(Type.Number({ minimum: 0, maximum: 100000 })),
+        views: Type.Optional(Type.Number({ minimum: 0 })),
+        reason: Type.Optional(Type.String({ maxLength: 200 })),
+      },
+      { additionalProperties: false },
+    ),
+    async execute(_id, params) {
+      const home = pathsFor().home;
+      const source =
+        params.source === "一手" || params.source === "二手" ? (params.source as "一手" | "二手") : "不明";
+      await appendObservation(home, {
+        at: new Date().toISOString(),
+        bvid: params.bvid,
+        picked: params.picked,
+        tags: normalizeTags(params.tags),
+        score: params.score,
+        source,
+        kind: params.kind as never,
+        durationMin: params.durationMin,
+        views: params.views,
+        reason: params.reason,
+      });
+      const observations = await readObservations(home);
+      const { config } = await loadConfig(pathsFor());
+      const stats = computeStats(observations, new Date(), config.tasteHalfLifeDays);
+      const needReflect = observations.length > 0 && observations.length % config.tasteReflectEvery === 0;
+      return jsonResult({
+        ok: true,
+        total: observations.length,
+        picked: stats.picked,
+        needReflect,
+        hint: needReflect
+          ? `已累计 ${observations.length} 条，该做一次反思了：调 bili_taste_reflect 写一句总结。`
+          : undefined,
+      });
+    },
+  });
+
+  pi.registerTool({
+    name: "bili_taste_reflect",
+    label: "反思并定稿口味",
+    description:
+      "在累计够 N 条观察后调用：写一句「我现在偏向什么、依据哪几条」。**它只保存文字，不直接改性格** —— 性格数值由代码从观察统计里推导，模型不能自己改自己的人格。",
+    promptSnippet: "bili_taste_reflect: 写一句反思；性格数值由代码算，不由模型定",
+    annotations: { readOnlyHint: false },
+    parameters: Type.Object({ summary: Type.String({ maxLength: 500 }) }, { additionalProperties: false }),
+    async execute(_id, params) {
+      const home = pathsFor().home;
+      const { config } = await loadConfig(pathsFor());
+      const observations = await readObservations(home);
+      const stats = computeStats(observations, new Date(), config.tasteHalfLifeDays);
+      const traits = deriveTraits(stats, observations, config.tasteMinSample);
+      await appendReflection(home, params.summary);
+      const entry = await saveTraits(home, traits, { total: stats.total, picked: stats.picked });
+      return jsonResult({
+        ok: true,
+        version: entry.version,
+        traits,
+        note: "文字已存档；性格数值由观察统计推导，模型无法直接设定。",
+      });
+    },
+  });
+
+  pi.registerTool({
+    name: "bili_taste_status",
+    label: "看当前口味与性格",
+    description:
+      "只读查看插件自己长出来的口味：累计观察数、各类标签命中率、性格数值、快照版本。不联网、不改任何文件。",
+    promptSnippet: "bili_taste_status: 看插件自己的口味统计与性格数值",
+    annotations: { readOnlyHint: true },
+    parameters: Type.Object({}, { additionalProperties: false }),
+    async execute() {
+      const home = pathsFor().home;
+      const { config } = await loadConfig(pathsFor());
+      const observations = await readObservations(home);
+      const now = new Date();
+      const stats = computeStats(observations, now, config.tasteHalfLifeDays);
+      const snapshot = await loadTraits(home);
+      const derived = deriveTraits(stats, observations, config.tasteMinSample);
+      const details = {
+        enabled: config.tasteEnabled,
+        total: stats.total,
+        picked: stats.picked,
+        traits: snapshot?.traits ?? derived,
+        traitsSource: snapshot ? `快照 v${snapshot.version}（代码推导）` : "尚未定稿（按默认值）",
+        matureTags: stats.byTag.filter((t) => t.rawSeen >= config.tasteMinSample).slice(0, 8),
+        immatureTags: stats.byTag.filter((t) => t.rawSeen < config.tasteMinSample).slice(0, 8),
+        bySource: stats.bySource,
+        nextReflectAt: Math.ceil((stats.total + 1) / config.tasteReflectEvery) * config.tasteReflectEvery,
+      };
+      return jsonResult(details);
     },
   });
 

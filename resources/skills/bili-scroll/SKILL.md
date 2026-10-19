@@ -43,6 +43,30 @@ description: 替用户刷一轮 B 站并写日报时使用。给定关注关键�
 5. **写日报**（除非 `reportDetail` 是 `none`）到指定路径，并告知用户路径。
    `reportDetail: none` 时**不写任何文件**，只在会话里把结论说清楚。
 
+## 记录口味（你自己的偏好靠它长出来）
+
+**每判断完一条视频，不论挑中还是跳过，都要调一次 `bili_taste_record`**：
+
+```
+bili_taste_record({
+  bvid, picked: true/false,
+  tags: ["实测", "ai"],        // 3-6 个，用你自己的分类词，别照抄标题
+  score: 0-5,                  // 你的打分
+  source: "一手" | "二手",
+  kind: "教程" | "访谈" | "课程" | "MV" | "杂谈",
+  durationMin, views,
+  reason: "一句话说清为什么"     // ≤200 字
+})
+```
+
+没记就等于没看过——**你的偏好完全由这些记录统计出来**，凭印象说"我好像喜欢什么"不算。
+
+攒够 `tasteReflectEvery`（默认 10）条时，工具会提示 `needReflect: true`，这时调
+`bili_taste_reflect({ summary })` 写一句总结。注意：**反思只存文字，性格数值由代码算**，
+你不能自己改自己的人格。
+
+想知道自己现在什么样：`bili_taste_status`。
+
 ## 日报格式
 
 ```markdown
