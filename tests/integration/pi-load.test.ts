@@ -106,3 +106,53 @@ test("走包清单发现路径（packages）时，扩展与 skill 都被认到",
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("真实执行工具：bili_scroll_status 能跑通并返回结构化结果", async () => {
+  // 这一类回归是 typecheck 与纯单测都抓不到的：v1.0.0 曾把 jsonResult 的函数体
+  // 误改成 `return jsonResult(details)`（自递归），静态检查与单测全过，
+  // 但工具一调用就 RangeError: Maximum call stack size exceeded。
+  // 所以这里必须真的调一次 execute()。
+  const dir = await mkdtemp(join(tmpdir(), "pi-bili-scroll-exec-"));
+  const savedHome = process.env.BILI_SCROLL_HOME;
+  try {
+    process.env.BILI_SCROLL_HOME = dir; // 隔离：不碰真实家目录
+    const packagePath = join(dirname(fileURLToPath(import.meta.url)), "../..");
+    const loader = new DefaultResourceLoader({
+      cwd: dir,
+      agentDir: dir,
+      settingsManager: SettingsManager.inMemory({ packages: [packagePath] }),
+    });
+    await loader.reload();
+
+    const extension = loader.getExtensions().extensions[0];
+    assert.ok(extension, "扩展应已加载");
+    const tool = extension.tools.get("bili_scroll_status")?.definition;
+    assert.ok(tool, "bili_scroll_status 应已注册");
+
+    const execute = tool.execute as unknown as (
+      id: string,
+      params: Record<string, unknown>,
+      signal?: unknown,
+      onUpdate?: unknown,
+      ctx?: unknown,
+    ) => Promise<{ content: Array<{ type: string; text: string }>; details: Record<string, unknown> }>;
+
+    const result = await execute("test-call", {});
+    // 形状
+    assert.equal(result.content[0]?.type, "text");
+    const parsed = JSON.parse(result.content[0].text) as Record<string, unknown>;
+    // 内容
+    assert.equal(parsed.home, dir);
+    assert.equal(typeof parsed.day, "string");
+    assert.match(String(parsed.day), /^\d{4}-\d{2}-\d{2}$/);
+    assert.equal(parsed.ranToday, false);
+    assert.equal(typeof parsed.report, "string");
+    assert.ok(Array.isArray(parsed.notices));
+    // details 与 content 必须一致（jsonResult 的契约）
+    assert.deepEqual(result.details, parsed);
+  } finally {
+    if (savedHome === undefined) delete process.env.BILI_SCROLL_HOME;
+    else process.env.BILI_SCROLL_HOME = savedHome;
+    await rm(dir, { recursive: true, force: true });
+  }
+});

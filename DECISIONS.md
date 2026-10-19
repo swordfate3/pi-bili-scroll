@@ -211,3 +211,19 @@ npm `latest` 双向确认）。
 **决定：** 加 `scripts/dev-links.mjs`（`npm run devlinks`）：重建前先检查全局安装是否存在，
 并用 `rmSync` 删掉可能残留的空目录再建软链，避免 `ln` 插到目录内部。
 规矩写进 `AGENTS.md`：**跑过 npm install 就立刻 devlinks**。
+
+## 17. 工具必须真实执行一次才算验证通过
+
+**状态：** 已采纳（事故后）
+
+**背景：** v1.0.0 里 `jsonResult` 的函数体被一次批量正则替换误改成 `return jsonResult(details)`
+（自递归）。`tsc --noEmit` 通过，39 个测试全过，远程也推了 —— 但工具**一调用**就
+`RangeError: Maximum call stack size exceeded`。也就是说：类型检查与纯函数单测**根本覆盖不到**
+「工具能不能跑」这一层。
+
+**决定：**
+1. 集成测试里必须**真的调一次** `tool.definition.execute()`，断言返回形状与内容
+   （`tests/integration/pi-load.test.ts` 的「真实执行工具」用例，用 `BILI_SCROLL_HOME` 隔离家目录）。
+2. 写回归测试后要**验证它确实抓得住 bug**：把旧的错误实现临时放回去，确认测试失败，再恢复。
+   这次就是这么验的（递归版本下 3 个用例失败，恢复后全绿）。
+3. 批量正则改写后必须人眼检查被改的那个函数本身有没有被误伤 —— 这次正是函数体被自己的替换规则吃掉。

@@ -105,8 +105,11 @@ let activeLogin: ActiveLogin | null = null;
  * 各分支 details 字段不同，若逐个写 return 字面量，TS 会把 TDetails 推成"第一个分支的形状"，
  * 后续分支就报不兼容 —— 统一收敛成 Record<string, unknown> 最省事也最不容易再踩。
  */
-function jsonResult(details: Record<string, unknown>) {
-  return jsonResult(details);
+export function jsonResult(details: Record<string, unknown>) {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(details, null, 2) }],
+    details,
+  };
 }
 
 /** 二维码目录：配置项相对 cwd 解析成绝对路径。 */
