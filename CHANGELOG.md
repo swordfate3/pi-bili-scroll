@@ -7,6 +7,18 @@
 > 设计取舍写在 [`DECISIONS.md`](./DECISIONS.md)，用法写在 [`README.md`](./README.md)，
 > 这里只回答一个问题：**这一版和上一版差在哪。**
 
+## [1.4.1] — 2026-10-19
+
+### 修复
+- **Telegram 通知在本容器里发不出去**：Node 的 `fetch` **不读** `HTTP_PROXY`，而容器靠代理出网。
+  实测默认 fetch 一定 `fetch failed`；`NODE_USE_ENV_PROXY` 只能**在 Node 启动前**生效，
+  在脚本里赋值无效（已证）。
+  改为 `postJson()`：优先 fetch，失败**自动降级到 curl**（curl 会读代理变量），
+  保证通知不因启动方式而悄悄失效。
+
+### 新增
+- `src/` 与脚本里所有 TG 相关错误都带上可执行的提示（`proxyHint`），不再只吐 `fetch failed`。
+
 ## [1.4.0] — 2026-10-19
 
 ### 新增

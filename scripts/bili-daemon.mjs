@@ -26,6 +26,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dayKey, needsCatchUp, notifyTelegram, planToday, shouldRun } from "./schedule-core.mjs";
 
+// ⚠️ Node 的 fetch 不读 HTTP_PROXY。但 `NODE_USE_ENV_PROXY` 必须在 Node **启动前**生效，
+// 在脚本里 process.env 赋值没用（实测）。所以真正兜底的是 schedule-core 里
+// 「fetch 失败 → 自动改走 curl」。这里给子进程设一下，让它们少走一次失败重试。
+if (!process.env.NODE_USE_ENV_PROXY) process.env.NODE_USE_ENV_PROXY = "1";
+
 const HOME = homedir();
 const DATA = process.env.BILI_SCROLL_HOME?.trim() || join(HOME, ".local", "share", "bili-scroll");
 const CONFIG_PATH = join(DATA, "schedule.json");

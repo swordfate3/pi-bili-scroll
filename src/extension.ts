@@ -350,7 +350,7 @@ export default function (pi: ExtensionAPI) {
         const child = spawn(process.execPath, [DAEMON_SCRIPT], {
           detached: true,
           stdio: ["ignore", "ignore", "ignore"],
-          env: { ...process.env, BILI_SCROLL_HOME: home },
+          env: { ...process.env, BILI_SCROLL_HOME: home, NODE_USE_ENV_PROXY: "1" },
         });
         child.unref();
         if (child.pid) writeFileSync(pidFile, `${child.pid}\n`);

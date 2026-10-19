@@ -110,25 +110,37 @@ test("needsCatchUp：过点一小时且今天没报告 → 补跑", () => {
 
 test("notifyTelegram：没配 token/chatId 时静默跳过，不发请求", async () => {
   let called = false;
-  const fetchImpl = async () => {
+  const post = async () => {
     called = true;
-    return { ok: true, json: async () => ({ ok: true }) };
+    return { status: 200, body: { ok: true } };
   };
-  assert.deepEqual(await notifyTelegram({ token: "", chatId: "", text: "x", fetchImpl }), {
+  assert.deepEqual(await notifyTelegram({ token: "", chatId: "", text: "x", post }), {
     sent: false,
     reason: "未配置 TG bot token / chat_id",
   });
   assert.equal(called, false, "没配置就不该发请求");
 });
 
-test("notifyTelegram：成功与失败都返回结构化结果", async () => {
-  const okFetch = async () => ({ ok: true, json: async () => ({ ok: true }) });
-  assert.deepEqual(await notifyTelegram({ token: "t", chatId: "c", text: "hi", fetchImpl: okFetch }), { sent: true });
+test("notifyTelegram：成功返回 sent:true", async () => {
+  const post = async () => ({ status: 200, body: { ok: true } });
+  assert.deepEqual(await notifyTelegram({ token: "t", chatId: "c", text: "hi", post }), { sent: true });
+});
 
-  const badFetch = async () => ({ ok: false, status: 401, json: async () => ({ ok: false, description: "Unauthorized" }) });
-  const r = await notifyTelegram({ token: "t", chatId: "c", text: "hi", fetchImpl: badFetch });
+test("notifyTelegram：HTTP 失败返回结构化原因，不抛异常", async () => {
+  const post = async () => ({ status: 401, body: { ok: false, description: "Unauthorized" } });
+  const r = await notifyTelegram({ token: "t", chatId: "c", text: "hi", post });
   assert.equal(r.sent, false);
   assert.match(r.reason, /401/);
+  assert.match(r.reason, /Unauthorized/);
+});
+
+test("notifyTelegram：底层抛错也收敛成 sent:false", async () => {
+  const post = async () => {
+    throw new Error("network down");
+  };
+  const r = await notifyTelegram({ token: "t", chatId: "c", text: "hi", post });
+  assert.equal(r.sent, false);
+  assert.match(r.reason, /network down/);
 });
 
 test("minutesOfDay 用本地时间", () => {

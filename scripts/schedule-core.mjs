@@ -118,23 +118,61 @@ export function needsCatchUp(state, now, reportExists) {
 // ── 通知（Telegram）──────────────────────────────────────────────────────────
 
 /**
+ * ⚠️ 容器里配了 HTTP_PROXY，而 Node 的 fetch **不读**代理环境变量（curl 会读）。
+ * 实测：默认 fetch → `fetch failed`；加 NODE_USE_ENV_PROXY=1 或 --use-env-proxy 才通。
+ * 这里做一次兜底：先试原生 fetch，失败且存在代理变量时，返回一个说明性错误，
+ * 由调用方决定是否改用 curl —— 免得"通知悄悄发不出去"。
+ */
+export const proxyHint =
+  "若容器内有 HTTP_PROXY，请用 NODE_USE_ENV_PROXY=1 启动，或改用 curl 发送 Telegram";
+
+/**
+ * 发一个 POST：优先原生 fetch，失败则**降级到 curl**。
+ *
+ * 为什么要降级而不是只报错：`NODE_USE_ENV_PROXY` / `--use-env-proxy` 必须在 Node
+ * **启动前**生效，运行中设置无效（实测）。而守护进程可能被以任何方式拉起，
+ * 靠"记得加环境变量"太脆 —— 于是失败就走 curl（它读代理变量），保证通知真的发得出去。
+ */
+export async function postJson(url, payload) {
+  const body = JSON.stringify(payload);
+  try {
+    const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body });
+    return { status: res.status, body: await res.json().catch(() => ({})) };
+  } catch (error) {
+    const curl = await curlPost(url, body);
+    if (curl) return curl;
+    throw new Error(`${error instanceof Error ? error.message : String(error)}（${proxyHint}）`);
+  }
+}
+
+/** 用系统 curl 兜底（容器里一定有）。失败返回 null，由调用方报原始错误。 */
+async function curlPost(url, body) {
+  try {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const run = promisify(execFile);
+    const { stdout } = await run("curl", ["-sS", "-m", "30", "-X", "POST", "-H", "content-type: application/json", "-d", body, url]);
+    return { status: 200, body: JSON.parse(stdout) };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 发一条 Telegram 消息。
  * token / chatId 从配置读，**不写进仓库**；没有配置时静默跳过（return {sent:false}）。
  */
-export async function notifyTelegram({ token, chatId, text, fetchImpl = fetch }) {
+export async function notifyTelegram({ token, chatId, text, post = postJson }) {
   if (!token || !chatId) return { sent: false, reason: "未配置 TG bot token / chat_id" };
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
   try {
-    const res = await fetchImpl(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text: String(text).slice(0, 3800), disable_web_page_preview: true }),
+    const { status, body } = await post(url, {
+      chat_id: chatId,
+      text: String(text).slice(0, 3800),
+      disable_web_page_preview: true,
     });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok || body?.ok === false) {
-      return { sent: false, reason: `HTTP ${res.status} ${body?.description ?? ""}`.trim() };
-    }
-    return { sent: true };
+    if (body?.ok === true) return { sent: true };
+    return { sent: false, reason: `HTTP ${status} ${body?.description ?? ""}`.trim() };
   } catch (error) {
     return { sent: false, reason: error instanceof Error ? error.message : String(error) };
   }
