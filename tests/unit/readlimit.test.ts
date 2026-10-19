@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  CONSECUTIVE_FAILURE_LIMIT,
   DEFAULT_READ_LIMITS,
   EMPTY_COUNTER,
   classifyRead,
   checkRead,
+  settleRead,
 } from "../../src/readlimit.js";
 
 test("识别 whale 的普通读与重读", () => {
@@ -69,7 +71,32 @@ test("限额可配：上限设 0 就一次都不许读", () => {
 });
 
 test("放行时返回已加一的计数器，避免调用方忘记录账", () => {
-  const d = checkRead({ light: 2, heavy: 1 }, "heavy");
+  const d = checkRead({ light: 2, heavy: 1, consecutiveFailures: 0 }, "heavy");
   assert.equal(d.allowed, true);
-  assert.deepEqual(d.next, { light: 2, heavy: 2 });
+  assert.deepEqual(d.next, { light: 2, heavy: 2, consecutiveFailures: 0 });
+});
+
+test("失败的读取要退还额度（今天 10 次里 4 次白扣的教训）", () => {
+  const afterReserve = checkRead(EMPTY_COUNTER, "light").next!;
+  assert.equal(afterReserve.light, 1);
+  // 结果回来是失败 → 退还，但记一次连续失败
+  const refunded = settleRead(afterReserve, "light", false);
+  assert.equal(refunded.light, 0, "失败的读取不该占用额度");
+  assert.equal(refunded.consecutiveFailures, 1);
+  // 成功 → 额度留着，连续失败清零
+  const settled = settleRead(afterReserve, "light", true);
+  assert.equal(settled.light, 1);
+  assert.equal(settled.consecutiveFailures, 0);
+});
+
+test("连续失败到阈值就熔断，别再白试", () => {
+  let c = { ...EMPTY_COUNTER };
+  for (let i = 0; i < CONSECUTIVE_FAILURE_LIMIT; i += 1) {
+    assert.equal(checkRead(c, "light").allowed, true, `第 ${i + 1} 次还允许试`);
+    c = settleRead(checkRead(c, "light").next!, "light", false);
+  }
+  const blocked = checkRead(c, "light");
+  assert.equal(blocked.allowed, false);
+  assert.match(blocked.reason ?? "", /连续 \d+ 次读取失败/);
+  assert.match(blocked.reason ?? "", /风控|HTML/);
 });

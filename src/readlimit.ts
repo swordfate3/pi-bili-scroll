@@ -24,9 +24,19 @@ export type ReadKind = "light" | "heavy";
 export interface ReadCounter {
   light: number;
   heavy: number;
+  /** 连续失败次数 —— 用来判断"是不是被风控了"，连续失败就别再试了 */
+  consecutiveFailures: number;
 }
 
-export const EMPTY_COUNTER: ReadCounter = { light: 0, heavy: 0 };
+export const EMPTY_COUNTER: ReadCounter = { light: 0, heavy: 0, consecutiveFailures: 0 };
+
+/**
+ * 连续失败几次就停手。
+ *
+ * 实测（2026-10-19）：字幕接口被拦时，连等 75 秒重试仍然失败；
+ * 继续试只是把好不容易攒下的读取额度全喂给失败。连续 3 次失败就判"被风控"，直接停。
+ */
+export const CONSECUTIVE_FAILURE_LIMIT = 3;
 
 export interface ReadLimits {
   /** 一轮内普通读的上限 */
@@ -122,12 +132,34 @@ export function checkRead(
         "（maxHeavyReadsPerRound）。重读一次几十 MB，别连着来。",
     };
   }
+  if (counter.consecutiveFailures >= CONSECUTIVE_FAILURE_LIMIT) {
+    return {
+      allowed: false,
+      kind,
+      reason:
+        `连续 ${counter.consecutiveFailures} 次读取失败，判断已被风控（B站 会返回 HTML 页而不是 JSON）。` +
+        "继续重试只会白耗额度。请先停手，过一段时间再来，或如实报告'没读到'。",
+    };
+  }
+
   return {
     allowed: true,
     kind,
     next: {
+      ...counter,
       light: counter.light + (kind === "light" ? 1 : 0),
       heavy: counter.heavy + (kind === "heavy" ? 1 : 0),
     },
+  };
+}
+
+/** 工具结果回来时结算：成功就在计数里留着，失败则**退还**额度并累计连续失败。 */
+export function settleRead(counter: ReadCounter, kind: ReadKind, ok: boolean): ReadCounter {
+  if (ok) return { ...counter, consecutiveFailures: 0 };
+  return {
+    ...counter,
+    light: Math.max(0, counter.light - (kind === "light" ? 1 : 0)),
+    heavy: Math.max(0, counter.heavy - (kind === "heavy" ? 1 : 0)),
+    consecutiveFailures: counter.consecutiveFailures + 1,
   };
 }

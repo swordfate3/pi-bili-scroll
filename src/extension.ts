@@ -39,7 +39,7 @@ import {
 import { sendComment, type MentionTarget } from "./comment.js";
 import { readPersona } from "./persona.js";
 import { checkQuota, loadQuota, pruneState, quotaPath, recordComment, saveQuota } from "./quota.js";
-import { classifyRead, checkRead, EMPTY_COUNTER, DEFAULT_READ_LIMITS, type ReadCounter } from "./readlimit.js";
+import { classifyRead, checkRead, settleRead, EMPTY_COUNTER, DEFAULT_READ_LIMITS, type ReadCounter, type ReadKind } from "./readlimit.js";
 import { isDryRunArgs, isKnownCommand, isWriteCommand, runWhale, READ_COMMANDS, WRITE_COMMANDS } from "./whale.js";
 import { buildRunPrompt, effectiveKeywords } from "./prompt.js";
 import { waitForRound } from "./round.js";
@@ -114,6 +114,9 @@ async function statusText(): Promise<string> {
  * 交互式会话里没跑过巡检时从会话开始累计，宁可早停。
  */
 let readCounter: ReadCounter = { ...EMPTY_COUNTER };
+
+/** 已放行但结果还没回来的读取：toolCallId → 类型。结果回来时据此结算（失败要退还额度）。 */
+const pendingReads = new Map<string, ReadKind>();
 
 /** 当前进行中的扫码登录（同一时刻只允许一个）。 */
 interface ActiveLogin extends QrSession {
@@ -255,6 +258,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       readCounter = { ...EMPTY_COUNTER }; // 新一轮：读取额度重置
+      pendingReads.clear();
       const snap = await snapshot();
       if (!snap.config.enabled) {
         say(ctx, "扩展已关闭（config.enabled=false）。要跑就在配置里打开，或直接说一句让我手动刷一轮。", "warning");
@@ -692,7 +696,10 @@ export default function (pi: ExtensionAPI) {
         maxHeavyReadsPerRound: config.maxHeavyReadsPerRound ?? DEFAULT_READ_LIMITS.maxHeavyReadsPerRound,
       });
       if (!decision.allowed) return { block: true, reason: decision.reason };
-      if (decision.next) readCounter = decision.next;
+      if (decision.next) {
+        readCounter = decision.next;
+        pendingReads.set(String(event.toolCallId ?? ""), readKind); // 等结果回来再结算
+      }
     }
 
     if (!description) return;
@@ -713,6 +720,16 @@ export default function (pi: ExtensionAPI) {
       `${description}\n${preview}\n\n这会用你已登录的 B 站账号对外发布，可能无法撤回。`,
     );
     if (!approved) return { block: true, reason: "用户拒绝了这次 B 站写操作。" };
+  });
+
+  // 读取结果回来时结算：成功就占着额度，失败则退还并累计连续失败。
+  // 不这么做的话，被风控时的失败会把额度吃光 —— 实测 10 次里 4 次白扣。
+  pi.on("tool_result", async (event) => {
+    const id = String(event.toolCallId ?? "");
+    const kind = pendingReads.get(id);
+    if (!kind) return;
+    pendingReads.delete(id);
+    readCounter = settleRead(readCounter, kind, !event.isError);
   });
 
   pi.on("session_start", async (_event, ctx) => {
