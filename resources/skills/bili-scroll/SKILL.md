@@ -10,7 +10,9 @@ description: 替用户刷一轮 B 站并写日报时使用。给定关注关键�
 
 ## 可用工具（全部只读）
 
-服务器名是 `bilibili`，经 adapter 加载后可能带包名前缀（如 `pi_bili_scroll__bilibili`），
+服务器名是 `bilibili`，经 adapter 加载后带包名前缀，实际是 `pi-bili-scroll__bilibili`。
+这些工具**不在默认工具列表里直接声明**（exposure 是 codemode），要通过 `mcp` 代理调：
+`mcp({ tool: "<工具名>", args: {...} })`，或 `mcp({ search: "字幕" })` 先找。
 按工具名后缀认即可：
 
 | 用途 | 工具 |
@@ -71,7 +73,9 @@ description: 替用户刷一轮 B 站并写日报时使用。给定关注关键�
 
 ## 边界
 
-- 字幕可能是 B 站 AI 识别字幕，可能不准；引用时说明来源，别当人工校对过的原文。
+- 字幕可能是 B 站 AI 识别字幕（返回里 `data_source: "ai_subtitle"`），可能不准；
+  引用时说明来源，别当人工校对过的原文。想只要人工字幕可加 `exclude_ai_subtitles: true`。
+- `search_bilibili_videos` 的关键词参数叫 **`query`**（不是 keyword），`limit` 最大 10。
 - 视频没有字幕时，`@xzxzzx/bilibili-mcp` 可以用本机 ASR 转写，但**必须显式开启**
   （`get_video_transcript` 的 `fallback_to_asr`），并且要用户先装过模型。默认不做。
 - 登录失效（凭证过期）时如实报告并让用户重新扫码，不要试图绕过。
