@@ -161,11 +161,11 @@ node scripts/setup-mcp-write.mjs
 
 会在 `~/.local/share/bili-scroll/mcp-write/` 建独立 venv 并装依赖（`mcp` 锁 `<2`）。
 
-**两道闸**：
+**写操作默认直接执行**（`config.confirmWrites: false`）——因为定时巡检跑的是 `pi -p`（无 UI），
+逐次确认会让它永远发不出去。想恢复确认就把 `confirmWrites` 设成 `true`。
 
-1. 白名单（上面那条）——模型看不到也用不了其他写工具；
-2. 扩展里的 `tool_call` 钩子——真正发出前**必须用户在弹窗里确认**；无 UI 模式（print/JSON）
-   **一律拒绝**（fail closed），不会因为"没有界面"就默许。
+无论开关如何，**每次写操作都会记进 `~/.local/share/bili-scroll/writes.log`**
+（时间 / 工具 / 参数摘要），事后可查"它到底发了什么"。
 
 ## 定时巡检（自己写的调度器）
 

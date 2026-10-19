@@ -27,6 +27,13 @@ export interface BiliScrollConfig {
   workdir: string | null;
   /** 登录二维码图片存放目录（相对 cwd 或绝对路径）；默认 downloads */
   qrDir: string;
+  /**
+   * 写操作（发评论/私信/动态）是否弹窗要用户确认。
+   * **默认 false**：直接执行 —— 这是用户明确要求（要能定时无人值守地自己发）。
+   * 设 true 可恢复逐次确认；但注意无 UI 模式（pi -p）下确认无从弹起，会被拒绝。
+   * 无论开关如何，每次写操作都会记进 `writes.log` 审计。
+   */
+  confirmWrites: boolean;
 }
 
 export const DEFAULT_CONFIG: BiliScrollConfig = {
@@ -37,6 +44,7 @@ export const DEFAULT_CONFIG: BiliScrollConfig = {
   notifyOnStart: true,
   workdir: null,
   qrDir: "downloads",
+  confirmWrites: false,
 };
 
 const REPORT_DETAILS: readonly ReportDetail[] = ["full", "brief", "none"];
@@ -129,6 +137,11 @@ export function normalizeConfig(raw: unknown): { config: BiliScrollConfig; notic
     } else {
       notices.push("workdir 不是非空字符串，已按「不读设定」处理。");
     }
+  }
+
+  if (record.confirmWrites !== undefined) {
+    if (isBoolean(record.confirmWrites)) config.confirmWrites = record.confirmWrites;
+    else notices.push("confirmWrites 不是布尔值，已用默认值 false（直接执行）。");
   }
 
   if (record.qrDir !== undefined) {

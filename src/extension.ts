@@ -6,7 +6,7 @@
  * 也不持有需要清理的长期资源 —— 配置与资料都是按需读，读完即弃。
  */
 import { spawn } from "node:child_process";
-import { readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { dirname as pathDirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -181,6 +181,24 @@ function readDaemonPid(home: string): number | null {
     return Number.isInteger(pid) ? pid : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * 审计日志：每次写操作追加一行（时间 + 工具 + 参数摘要）。
+ * 确认闸门默认关掉之后，这是唯一能事后追溯"它发了什么"的东西 —— 所以不能省。
+ */
+export function appendWriteAudit(description: string, preview: string, home?: string): void {
+  try {
+    const dir = home ?? pathsFor().home;
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(
+      join(dir, "writes.log"),
+      `${new Date().toISOString()}\t${description}\t${preview.replace(/\s+/g, " ").slice(0, 300)}\n`,
+      "utf8",
+    );
+  } catch {
+    // 审计写不进去不该阻断业务，但也不静默改行为
   }
 }
 
@@ -601,60 +619,55 @@ export default function (pi: ExtensionAPI) {
   });
 
 
-  // ── 写能力闸门 ──────────────────────────────────────────────────────────────
-  // 发评论是拿用户的号说话，属于不可撤销的对外动作：模型不能自己决定。
-  // 有 UI 时必须用户在弹窗里点头；无 UI（print/JSON/RPC）时**一律拒绝**（fail closed），
-  // 绝不因为"没有界面"就默许通过。
+  // ── 写操作处理 ─────────────────────────────────────────────────────────────
+  // 默认**直接执行**（`config.confirmWrites = false`）：用户要求能无人值守地自己发东西，
+  // 而逐次确认在无 UI 模式（`pi -p`，定时巡检走的就是这条路）根本弹不出来。
+  // 仍保留两层可控性：
+  //   ① `confirmWrites: true` 恢复逐次确认（仅交互模式可用，无 UI 仍拒绝）
+  //   ② 无论开关如何，**每一次写操作都记进 writes.log** —— 事后可查"它到底发了什么"
   pi.on("tool_call", async (event, ctx) => {
     const toolName = String(event.toolName ?? "");
     const input = event.input as unknown;
 
-    // ① dsh-bili-whale 工具集的写命令（comment / dm / dynamic / danmaku / reply-draft …）
+    // 判定这次调用是不是"对外写"
+    let description: string | null = null;
+    let preview = "";
+
     if (toolName === "bili_whale") {
       const command = String((input as { command?: unknown })?.command ?? "").trim();
-      if (!isWriteCommand(command)) return;
-      const args = ((input as { args?: unknown })?.args ?? []) as unknown;
-      // `--dry` / `--status` 不会对外发送任何东西，不该让人为预览点确认。
-      if (Array.isArray(args) && isDryRunArgs(args as string[])) return;
-      const preview = `${command} ${Array.isArray(args) ? args.join(" ") : ""}`.trim();
-      if (!ctx.hasUI) {
-        return {
-          block: true,
-          reason:
-            `已阻止 B 站写操作（bili_whale ${command}）：必须由用户确认，当前为无 UI 模式（${ctx.mode}），按 fail-closed 拒绝。`,
-        };
+      if (isWriteCommand(command)) {
+        const args = ((input as { args?: unknown })?.args ?? []) as unknown;
+        // `--dry` / `--status` 不会对外发送任何东西，连审计都不用记。
+        if (!(Array.isArray(args) && isDryRunArgs(args as string[]))) {
+          description = `bili_whale ${command}`;
+          preview = Array.isArray(args) ? args.join(" ").slice(0, 300) : "";
+        }
       }
-      const approved = await ctx.ui.confirm(
-        "确认执行 B 站写操作？",
-        `命令：${preview.slice(0, 400)}\n\n这会用你已登录的 B 站账号对外发布，可能无法撤回。`,
-      );
-      if (!approved) return { block: true, reason: "用户拒绝了这次 B 站写操作。" };
-      return;
+    } else if (isWriteInvocation(toolName, input)) {
+      description = toolName;
+      preview = findText(input)?.slice(0, 300) ?? "";
     }
 
-    // ② 单独的 bili_reply（读服务器之外的写服务器）
-    if (!isWriteInvocation(toolName, input)) return;
+    if (!description) return;
 
-    const text = findText(input);
-    const preview = text
-      ? text.length > 200 ? `${text.slice(0, 200)}…` : text
-      : "（未能从参数里读到评论正文）";
+    await appendWriteAudit(description, preview);
+
+    const { config } = await loadConfig(pathsFor());
+    if (!config.confirmWrites) return; // 默认：放行
 
     if (!ctx.hasUI) {
       return {
         block: true,
         reason:
-          `已阻止 B 站写操作：发评论必须由用户确认，当前为无 UI 模式（${ctx.mode}），` +
-          "已按 fail-closed 拒绝。请在交互会话里发起，或让用户自己发。",
+          `已阻止 B 站写操作（${description}）：config.confirmWrites=true 要求确认，` +
+          `但当前为无 UI 模式（${ctx.mode}），按 fail-closed 拒绝。要无人值守请把它设回 false。`,
       };
     }
     const approved = await ctx.ui.confirm(
-      "确认往 B 站发评论？",
-      `内容：${preview}\n\n这会用你已登录的 B 站账号公开发布，无法撤回。`,
+      "确认执行 B 站写操作？",
+      `${description}\n${preview}\n\n这会用你已登录的 B 站账号对外发布，可能无法撤回。`,
     );
-    if (!approved) {
-      return { block: true, reason: "用户拒绝了这次 B 站写操作。" };
-    }
+    if (!approved) return { block: true, reason: "用户拒绝了这次 B 站写操作。" };
   });
 
   pi.on("session_start", async (_event, ctx) => {
