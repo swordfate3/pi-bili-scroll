@@ -166,3 +166,48 @@ Node 把 `import.meta.url` 解析成**真实路径**，而经 `npx` / `.bin` 启
 **验证：** 用将要写进清单的确切命令做完整 MCP 握手，返回 `serverInfo.version=1.14.3` 与
 **12 个工具**（全部只读，确认无发评论/私信/上传）。测试里加了回归断言：清单不得出现 `npx`、
 入口必须是绝对路径且以 `/@xzxzzx/bilibili-mcp/dist/cli.js` 结尾、必须位于持久卷家目录下。
+
+## 14. 登录自己做，不调用 `bilibili-mcp setup`
+
+**状态：** 已采纳（2026-10-19，v1.0.0）
+
+**背景：** 用户要求把登录流程做进扩展：二维码存到 `downloads/`、输出路径、登录完成后删图。
+而 `bilibili-mcp setup` 是**交互式**的，实测在无 TTY 环境直接拒绝：
+
+```
+二维码需要可交互的输入和输出，并有足够空间；请放大终端后重试，或选择手动 Cookie。
+```
+
+扩大伪终端窗口能画出来，但扩展里没有终端，也没法把"半块字符二维码"稳定交付给用户。
+
+**决定：** 自己走 B站官方扫码接口（`passport.bilibili.com` 的 generate/poll），用 `qrcode`
+渲染成 PNG 落到文件，凭证按既有格式写入 `~/.bilibili-mcp/config.json`
+（`sessdata` / `bili_jct` / `dedeuserid` / `expiresAt`，其中 `expiresAt` 是**毫秒**，约 30 天）。
+
+**代价与风险：** 多维护一条登录实现，B站改接口时要跟。缓解方式是**只依赖两个公开端点**，
+且写完凭证后可用 MCP 自己的 `check_bilibili_credentials` 交叉验证（实测 `configured: true`
++ `logged_in: true`）。另外 `qrcode` 成为本项目唯一运行时依赖（纯 JS，无原生编译）。
+
+## 15. 二维码"用完即删"，失效也删
+
+**状态：** 已采纳
+
+**原因：** 二维码图片虽然不等于凭证，但它就是一次性登录入口；留在 `downloads/` 里既是垃圾，
+也容易被截图外传。所以 `bili_login_status` 在 **confirmed** 和 **expired** 两种终态都删除图片，
+并在返回值里如实报告 `qrDeleted`。正常扫码过程中不删（还要给用户扫）。
+
+文件名带时间戳（`bili-login-qr-YYYYMMDD-HHmmss.png`），避免重试时覆盖正在展示的那张。
+
+## 16. 开发目录的 peer 软链必须用脚本重建
+
+**状态：** 已采纳（事故后）
+
+**背景：** 2026-10-19 我在开发目录跑 `npm install qrcode`，npm 把指向全局 pi 的两个软链
+（`@earendil-works`、`typebox`）当作多余包清理，并**顺着软链删掉了目标内容** ——
+`/home/node/.local/lib/node_modules/@earendil-works/` 被清空，`pi` 命令随之不可用，
+只能 `npm i -g @earendil-works/pi-coding-agent@1.3.0` 重装恢复（版本由 `lastChangelogVersion` 与
+npm `latest` 双向确认）。
+
+**决定：** 加 `scripts/dev-links.mjs`（`npm run devlinks`）：重建前先检查全局安装是否存在，
+并用 `rmSync` 删掉可能残留的空目录再建软链，避免 `ln` 插到目录内部。
+规矩写进 `AGENTS.md`：**跑过 npm install 就立刻 devlinks**。

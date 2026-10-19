@@ -26,7 +26,13 @@ npm run check      # typecheck + 28 个测试，必须全绿
    `fileURLToPath(import.meta.url) === process.argv[1]` 判定主入口，经 `npx`/`.bin` 启动时
    `process.argv[1]` 是符号链接路径，主入口不执行、静默退出 0（`DECISIONS.md` 13、测试里也有断言守着）。
 
-3. **凭证与运行数据不在仓库里**：B 站凭证在 `~/.bilibili-mcp/config.json`（外部服务器所有），
+3. **跑过 `npm install` 之后必须立刻 `npm run devlinks`**（否则 `npm run check` 解析不到 pi 与 typebox）。
+   ⚠️ 2026-10-19 事故：npm install 把开发目录里指向全局 pi 的两个软链当"多余包"清理，
+   并**顺着软链删掉了目标内容** —— `/home/node/.local/lib/node_modules/@earendil-works/`
+   被清空，`pi` 命令直接不可用，只能用
+   `npm i -g @earendil-works/pi-coding-agent@1.3.0` 重装恢复。
+   `scripts/dev-links.mjs` 会在重建软链前检查全局安装是否还在，并把可能的空目录先删掉。
+4. **凭证与运行数据不在仓库里**：B 站凭证在 `~/.bilibili-mcp/config.json`（外部服务器所有），
    配置与日报在 `~/.local/share/bili-scroll/`。两者都不提交，也不要复制进仓库。
 
 ## 边界（改动前先确认没有越界）
@@ -35,6 +41,8 @@ npm run check      # typecheck + 28 个测试，必须全绿
   「刷完 @ 你」不属本版，要做得换实现，见 `DECISIONS.md` 2。
 - **不常驻、不定时**：Pi 是按次启动的，定时只能靠外部 cron，见 `DECISIONS.md` 6。
 - **不自动跑**：`session_start` 只提示，绝不自动发起模型轮次，见 `DECISIONS.md` 7。
+- 登录相关（申请二维码、轮询、写凭证、删二维码）都在 `src/login.ts`；它**自己走官方扫码接口**，
+  不依赖 `bilibili-mcp setup`（那个要真终端）。`qrcode` 是唯一的运行时依赖。
 - 新增/修改提示词逻辑请放进 `src/prompt.ts`，等待逻辑放 `src/round.ts` —— 这两块是
   「错了不报错、只静默做错」的类型，必须可测，见 `DECISIONS.md` 12。
 

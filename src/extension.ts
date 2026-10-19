@@ -6,6 +6,7 @@
  * 也不持有需要清理的长期资源 —— 配置与资料都是按需读，读完即弃。
  */
 import { stat } from "node:fs/promises";
+import { isAbsolute, join, resolve } from "node:path";
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -15,6 +16,18 @@ import { Type } from "typebox";
 import { loadCharter } from "./charter.js";
 import { loadConfig, type BiliScrollConfig } from "./config.js";
 import { dayKey, pathsFor, reportPath, type BiliScrollPaths } from "./home.js";
+import {
+  CREDENTIAL_PATH,
+  QR_TTL_SECONDS,
+  pollQrSession,
+  qrFileName,
+  readExistingCredential,
+  removeQrFile,
+  renderQrPng,
+  requestQrSession,
+  writeCredential,
+  type QrSession,
+} from "./login.js";
 import { buildRunPrompt, effectiveKeywords } from "./prompt.js";
 import { waitForRound } from "./round.js";
 
@@ -79,6 +92,26 @@ async function statusText(): Promise<string> {
   ];
   for (const notice of snap.notices) lines.push(`⚠️ ${notice}`);
   return lines.join("\n");
+}
+
+/** 当前进行中的扫码登录（同一时刻只允许一个）。 */
+interface ActiveLogin extends QrSession {
+  qrPath: string;
+}
+let activeLogin: ActiveLogin | null = null;
+
+/**
+ * 统一的工具结果形状。
+ * 各分支 details 字段不同，若逐个写 return 字面量，TS 会把 TDetails 推成"第一个分支的形状"，
+ * 后续分支就报不兼容 —— 统一收敛成 Record<string, unknown> 最省事也最不容易再踩。
+ */
+function jsonResult(details: Record<string, unknown>) {
+  return jsonResult(details);
+}
+
+/** 二维码目录：配置项相对 cwd 解析成绝对路径。 */
+function resolveQrDir(cwd: string, qrDir: string): string {
+  return isAbsolute(qrDir) ? qrDir : resolve(cwd, qrDir);
 }
 
 export default function (pi: ExtensionAPI) {
@@ -171,10 +204,150 @@ export default function (pi: ExtensionAPI) {
         config: { ...snap.config, effectiveKeywords: effectiveKeywords(snap.config.keywords) },
         notices: snap.notices,
       };
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(details, null, 2) }],
-        details,
+      return jsonResult(details);
+    },
+  });
+
+  pi.registerCommand("bili-login", {
+    description: "扫码登录 B 站：把二维码存成 PNG 并给出路径，登录成功后自动删除二维码。",
+    async handler(_args: string, ctx: ExtensionCommandContext) {
+      const existing = await readExistingCredential();
+      if (existing) {
+        say(ctx, `已经是登录状态（凭证在 ${CREDENTIAL_PATH}，到期 ${new Date(existing.expiresAt).toISOString()}）。要重新登录就说一声。`);
+        return;
+      }
+      try {
+        const session = await requestQrSession();
+        const qrPath = await renderQrPng(session.url, join(resolveQrDir(ctx.cwd, (await snapshot()).config.qrDir), qrFileName()));
+        activeLogin = { ...session, qrPath };
+        say(
+          ctx,
+          [
+            "二维码已保存，请用手机 B站 App 扫码并在手机上确认：",
+            qrPath,
+            `有效期约 ${QR_TTL_SECONDS} 秒；登录成功后这个图片会被自动删除。`,
+            "扫完告诉我，我查一下状态。",
+          ].join("\n"),
+        );
+      } catch (error) {
+        say(ctx, `发起登录失败：${error instanceof Error ? error.message : String(error)}`, "error");
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "bili_login_start",
+    label: "B站扫码登录（生成二维码）",
+    description:
+      "发起 B 站扫码登录：把二维码渲染成 PNG 存到下载目录并返回文件路径，供用户用手机 B站 App 扫描。默认目录是 cwd/downloads，可用参数 dir 覆盖。已登录时默认不重复发起（force=true 可强制换号）。不返回任何 Cookie。",
+    promptSnippet: "bili_login_start: 生成 B 站登录二维码到 downloads 并返回路径",
+    parameters: Type.Object(
+      {
+        dir: Type.Optional(Type.String({ maxLength: 1024 })),
+        force: Type.Optional(Type.Boolean()),
+      },
+      { additionalProperties: false },
+    ),
+    async execute(_id, params, _signal, _update, ctx) {
+      const snap = await snapshot();
+      if (!params.force) {
+        const existing = await readExistingCredential();
+        if (existing) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify(
+                  {
+                    status: "already_logged_in",
+                    credentialPath: CREDENTIAL_PATH,
+                    expiresAt: new Date(existing.expiresAt).toISOString(),
+                    hint: "已经登录，无需扫码。要换账号请传 force=true。",
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+            details: { status: "already_logged_in" },
+          };
+        }
+      }
+      const session = await requestQrSession();
+      const dir = params.dir ?? resolveQrDir(ctx.cwd, snap.config.qrDir);
+      const qrPath = await renderQrPng(session.url, join(dir, qrFileName()));
+      activeLogin = { ...session, qrPath };
+      const details = {
+        status: "waiting_for_scan",
+        qrPath,
+        expiresInSeconds: QR_TTL_SECONDS,
+        credentialPath: CREDENTIAL_PATH,
+        next: "让用户用手机 B站 App 扫码并确认（选「记住我/长期」），随后调用 bili_login_status 查询结果。",
       };
+      return jsonResult(details);
+    },
+  });
+
+  pi.registerTool({
+    name: "bili_login_status",
+    label: "查询扫码登录结果",
+    description:
+      "查询当前扫码登录状态（pending/scanned/confirmed/expired）。登录成功时写入凭证文件并删除二维码图片，返回凭证路径。没有进行中的登录会提示先调用 bili_login_start。不返回任何 Cookie 值。",
+    promptSnippet: "bili_login_status: 查扫码结果；成功则落凭证并删除二维码",
+    parameters: Type.Object({}, { additionalProperties: false }),
+    async execute() {
+      if (!activeLogin) {
+        const existing = await readExistingCredential();
+        const details = existing
+          ? {
+              status: "already_logged_in",
+              credentialPath: CREDENTIAL_PATH,
+              expiresAt: new Date(existing.expiresAt).toISOString(),
+            }
+          : { status: "no_active_login", hint: "先调用 bili_login_start 生成二维码。" };
+        return jsonResult(details);
+      }
+
+      const result = await pollQrSession(activeLogin);
+      const qrPath = activeLogin.qrPath;
+
+      if (result.status === "confirmed" && result.credential) {
+        const credentialPath = await writeCredential(result.credential);
+        const qrDeleted = await removeQrFile(qrPath);
+        activeLogin = null;
+        const details = {
+          status: "confirmed",
+          credentialPath,
+          expiresAt: new Date(result.credential.expiresAt).toISOString(),
+          qrPath,
+          qrDeleted,
+        };
+        return jsonResult(details);
+      }
+
+      if (result.status === "expired") {
+        const qrDeleted = await removeQrFile(qrPath);
+        activeLogin = null;
+        const details = {
+          status: "expired",
+          message: result.message,
+          qrPath,
+          qrDeleted,
+          hint: "二维码已失效，需重新调用 bili_login_start 生成一张。",
+        };
+        return jsonResult(details);
+      }
+
+      const details = {
+        status: result.status,
+        message: result.message,
+        qrPath,
+        expiresInSeconds: Math.max(
+          0,
+          QR_TTL_SECONDS - Math.floor((Date.now() - activeLogin.startedAt) / 1000),
+        ),
+      };
+      return jsonResult(details);
     },
   });
 

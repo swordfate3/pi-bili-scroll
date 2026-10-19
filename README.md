@@ -25,15 +25,33 @@ pi install git:github.com/<you>/pi-bili-scroll    # 或从 git
 | 服务器副本 | 一次性装一份到持久卷，见「准备服务器」 |
 | B 站登录 | **必须你本人扫码**，见下 |
 
-### 登录（必须本人做）
+### 登录（现在扩展自己会做）
 
-B 站服务器的凭证存在 `~/.bilibili-mcp/config.json`。Agent 不该、也不会替你收 Cookie：
+凭证存在 `~/.bilibili-mcp/config.json`。**扫码这件事扩展能代办**（见下），Agent 仍然不该、也不会向你索要 Cookie。
+
+#### 方式一：让扩展生成二维码（推荐）
+
+```
+/bili-login
+```
+
+或直接说「登录 B 站」。扩展会：
+1. 向 B站申请登录二维码；
+2. 渲染成 PNG 存到 `downloads/bili-login-qr-<时间戳>.png`（权限 600），并**把路径告诉你**；
+3. 你用手机 B站 App 扫码并确认（**选「记住我 / 长期」**）；
+4. 确认后扩展写入凭证，并**自动删除二维码图片**；失效的二维码同样会被清理。
+
+用工具调也行：`bili_login_start` → 轮询 `bili_login_status`。
+
+#### 方式二：命令行（无扩展时的备选）
 
 ```bash
 CLI=~/.local/share/bili-scroll/mcp/node_modules/@xzxzzx/bilibili-mcp/dist/cli.js
-node "$CLI" setup     # 选扫码登录，手机 B站 App 扫终端里的码
+node "$CLI" setup     # 需要真终端；无 TTY 环境会拒绝画二维码
 node "$CLI" check     # 确认凭证已加载
 ```
+
+> 这条命令是**交互式**的，必须有真终端 —— 容器里一般没有，所以日常请用方式一。
 
 ### 准备服务器（一次性）
 

@@ -25,6 +25,8 @@ export interface BiliScrollConfig {
   notifyOnStart: boolean;
   /** 读人设的工作区路径（那里有 AGENTS.md）；null = 不读设定、按中性说话 */
   workdir: string | null;
+  /** 登录二维码图片存放目录（相对 cwd 或绝对路径）；默认 downloads */
+  qrDir: string;
 }
 
 export const DEFAULT_CONFIG: BiliScrollConfig = {
@@ -34,6 +36,7 @@ export const DEFAULT_CONFIG: BiliScrollConfig = {
   reportDetail: "brief",
   notifyOnStart: true,
   workdir: null,
+  qrDir: "downloads",
 };
 
 const REPORT_DETAILS: readonly ReportDetail[] = ["full", "brief", "none"];
@@ -126,6 +129,12 @@ export function normalizeConfig(raw: unknown): { config: BiliScrollConfig; notic
     } else {
       notices.push("workdir 不是非空字符串，已按「不读设定」处理。");
     }
+  }
+
+  if (record.qrDir !== undefined) {
+    const value = record.qrDir;
+    if (typeof value === "string" && value.trim().length > 0) config.qrDir = value.trim();
+    else notices.push("qrDir 不是非空字符串，已用默认值 downloads。");
   }
 
   return { config, notices };
