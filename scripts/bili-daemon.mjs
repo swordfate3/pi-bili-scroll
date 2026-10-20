@@ -162,6 +162,38 @@ async function runRound(command, dry, options = {}) {
   return { timedOut: true, reportPath: reportPathFor() };
 }
 
+/**
+ * 沉默档位（和 src/silence.ts 同一套阈值，只是这里只需要"推不推"）。
+ *
+ * 为什么不 import 那边的 TypeScript：daemon 是纯 .mjs、由 node 直接跑，
+ * 没有构建步骤。两边阈值从同一份配置读，逻辑只有三行，重复的代价小于引入构建。
+ * 任何不一致都会在测试里被抓到（tests/unit/silence.test.ts 会对照同一个配置语义）。
+ */
+function silenceLevel(home, config) {
+  if (config.silenceEnabled === false) return "normal";
+  const after = Number(config.silenceAfterDays ?? 3);
+  const stop = Number(config.silenceStopDays ?? 7);
+  let lastAt = null;
+  try {
+    const raw = readFileSync(join(home, "taste", "touches.jsonl"), "utf8");
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const at = JSON.parse(line).at;
+        const time = Date.parse(at);
+        if (!Number.isNaN(time) && (lastAt === null || time > lastAt)) lastAt = time;
+      } catch {}
+    }
+  } catch {
+    return "normal"; // 没记录 = 新装，不判冷落
+  }
+  if (lastAt === null) return "normal";
+  const days = Math.floor((Date.now() - lastAt) / 86400000);
+  if (days >= stop) return "anxious";
+  if (days >= after) return "quiet";
+  return "normal";
+}
+
 async function notifySummary(text, dry) {
   const notify = readJson(NOTIFY_PATH, DEFAULT_NOTIFY);
   const token = notify?.telegram?.token ?? "";
@@ -270,8 +302,16 @@ async function tick(dry) {
     intro: `📺 B站巡检 ${dayKey(now)} · ${check.why}`,
   });
   log(`  报告解析出 ${count} 条，开始推送`);
-  await notifySummary(text, dry);
-  await notifyBilibiliDm(text, dry);
+
+  // 沉默 7 天+ = 不分享，但日报照写（"日记照写"不能变）。
+  const level = silenceLevel(home, config);
+  if (level === "anxious") {
+    log("  🫥 沉默超过阈值，本轮不推送（报告已写到磁盘，自己看）");
+    return;
+  }
+  const prefix = level === "quiet" ? "（安静期）" : "";
+  await notifySummary(prefix + text, dry);
+  await notifyBilibiliDm(prefix + text, dry);
 }
 
 const argv = process.argv.slice(2);

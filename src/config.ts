@@ -68,6 +68,10 @@ export interface BiliScrollConfig {
   voiceReflectEvery: number;
   /** 说话方式的半衰期（天）：表达变化比口味快，所以默认 21 天 */
   voiceHalfLifeDays: number;
+  /** 沉默衰减：连续多少天没回应开始降额度（3 天） */
+  silenceEnabled: boolean;
+  silenceAfterDays: number;
+  silenceStopDays: number;
   /** 某类标签至少被看到几次才允许进入偏好 */
   tasteMinSample: number;
   /** 观察的时间衰减半衰期（天），防"最近看多了就固化" */
@@ -97,6 +101,9 @@ export const DEFAULT_CONFIG: BiliScrollConfig = {
   voiceMinSample: 5,
   voiceReflectEvery: 5,
   voiceHalfLifeDays: 21,
+  silenceEnabled: true,
+  silenceAfterDays: 3,
+  silenceStopDays: 7,
   tasteMinSample: 8,
   tasteHalfLifeDays: 14,
   tasteReflectEvery: 10,
@@ -255,6 +262,29 @@ export function normalizeConfig(raw: unknown): { config: BiliScrollConfig; notic
     } else {
       notices.push(`${key} 不是正整数，已用默认值 ${DEFAULT_CONFIG[key]}。`);
     }
+  }
+
+  if (record.silenceEnabled !== undefined) {
+    if (isBoolean(record.silenceEnabled)) config.silenceEnabled = record.silenceEnabled;
+    else notices.push("silenceEnabled 不是布尔值，已用默认值 true。");
+  }
+
+  for (const key of ["silenceAfterDays", "silenceStopDays"] as const) {
+    const value = record[key];
+    if (value === undefined) continue;
+    if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+      config[key] = value;
+    } else {
+      notices.push(`${key} 不是正整数，已用默认值 ${DEFAULT_CONFIG[key]}。`);
+    }
+  }
+  // 两个阈值不能颠倒，否则“开始衰减”的档位永远进不去。
+  if (config.silenceStopDays <= config.silenceAfterDays) {
+    notices.push(
+      `silenceStopDays(${config.silenceStopDays}) 必须大于 silenceAfterDays(${config.silenceAfterDays})，已用默认值 3 / 7。`,
+    );
+    config.silenceAfterDays = 3;
+    config.silenceStopDays = 7;
   }
 
   if (record.qrDir !== undefined) {

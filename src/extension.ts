@@ -54,6 +54,7 @@ import {
 } from "./taste.js";
 import { isDryRunArgs, isKnownCommand, isWriteCommand, runWhale, READ_COMMANDS, WRITE_COMMANDS } from "./whale.js";
 import { buildRunPrompt, effectiveKeywords } from "./prompt.js";
+import { buildSilenceBlock, computeSilence, isHumanTouch, lastTouchAt, recordTouch } from "./silence.js";
 import {
   appendVoice,
   appendVoiceNote,
@@ -128,6 +129,16 @@ async function buildVoiceContext(snap: Snapshot): Promise<string | null> {
     reflections: await readVoiceReflections(home),
     notes: await readVoiceNotes(home),
     minSample: snap.config.voiceMinSample,
+  });
+}
+
+/** 当前沉默状态（没有回应记录 / 开关关闭时就是 normal）。 */
+async function silenceNow(config: BiliScrollConfig, home: string, now = new Date()) {
+  return computeSilence(now, await lastTouchAt(home), {
+    enabled: config.silenceEnabled,
+    afterDays: config.silenceAfterDays,
+    stopDays: config.silenceStopDays,
+    baseCommentCap: config.maxCommentsPerDay,
   });
 }
 
@@ -360,6 +371,7 @@ export default function (pi: ExtensionAPI) {
         persona,
         taste: tasteBlock,
         autoComment: snap.config.autoComment,
+        silence: buildSilenceBlock(await silenceNow(snap.config, snap.paths.home)),
         // 说话方式和口味用同一套机制：数值由代码从真实评论推导，模型只能写自述。
         voice: snap.config.autoComment ? await buildVoiceContext(snap) : null,
         commentLimits: {
@@ -563,10 +575,25 @@ export default function (pi: ExtensionAPI) {
         minMinutesBetweenComments: config.minMinutesBetweenComments,
         sameVideoCooldownDays: config.sameVideoCooldownDays,
       };
+      // 沉默期额度：档位由代码算（见 silence.ts），不是模型自己克制。
+      const silence = await silenceNow(config, pathsFor().home, now);
+      if (silence.commentCap === 0) {
+        return jsonResult({
+          ok: false,
+          blockedBy: "silence",
+          error:
+            silence.days === null
+              ? "沉默期额度为 0，本轮不评论"
+              : `主人已经 ${silence.days} 天没有回应，沉默期额度降到 0（silenceStopDays=${config.silenceStopDays}）`,
+          silence,
+        });
+      }
+      limits.maxCommentsPerDay = Math.min(limits.maxCommentsPerDay, silence.commentCap);
+
       const state = pruneState(await loadQuota(quotaFile), now);
       const decision = checkQuota(state, params.bvid, now, limits);
       if (!decision.allowed) {
-        return jsonResult({ ok: false, blockedBy: "quota", error: decision.reason, limits });
+        return jsonResult({ ok: false, blockedBy: "quota", error: decision.reason, limits, silence });
       }
 
       const result = await sendComment({
@@ -620,6 +647,7 @@ export default function (pi: ExtensionAPI) {
             }
           : {}),
         remainingToday: Math.max(0, (decision.remainingToday ?? 1) - 1),
+        silence,
         needReflect,
         ...(needReflect
           ? {
@@ -846,16 +874,22 @@ export default function (pi: ExtensionAPI) {
       const state = pruneState(await loadQuota(quotaPath(snap.paths.home)), now);
       const today = state.days[dayKey()];
       const usedToday = today?.count ?? 0;
-      const remaining = Math.max(0, config.maxCommentsPerDay - usedToday);
+      const silence = await silenceNow(config, snap.paths.home, now);
+      // 剩余额度要按“沉默档位压过之后的实际上限”算，否则会报个发不出去的数。
+      const effectiveCap = Math.min(config.maxCommentsPerDay, silence.commentCap);
+      const remaining = Math.max(0, effectiveCap - usedToday);
       const lastAt = today?.lastAt ? new Date(today.lastAt) : null;
       const waitMin = lastAt
         ? Math.max(0, config.minMinutesBetweenComments - Math.floor((now.getTime() - lastAt.getTime()) / 60000))
         : 0;
       const lines = [
         `自己发评论：${config.autoComment ? "开" : "关"}${config.autoComment ? "（巡检时会按口味自己发）" : "（只看不说）"}`,
-        `今日已评 ${usedToday}/${config.maxCommentsPerDay} 条，还可发 ${remaining} 条`,
+        `今日已评 ${usedToday}/${effectiveCap} 条，还可发 ${remaining} 条${effectiveCap < config.maxCommentsPerDay ? `（配置上限 ${config.maxCommentsPerDay}，沉默期压到 ${effectiveCap}）` : ""}`,
         waitMin > 0 ? `距上次评论不足 ${config.minMinutesBetweenComments} 分钟，还要等 ${waitMin} 分钟` : "间隔限制：已满足",
         `写操作确认（confirmWrites）：${config.confirmWrites ? "开（无 UI 模式下写操作会被拦）" : "关（直接执行，但每条都记进 writes.log）"}`,
+        silence.days === null
+          ? "沉默档位：正常（还没有主人回应记录）"
+          : `沉默档位：${{ normal: "正常", quiet: "安静", anxious: "心慌" }[silence.level]}（主人已 ${silence.days} 天没回应；本轮额度上限 ${silence.commentCap} 条）`,
         "",
         "开关：/bili-comment on 或 /bili-comment off",
       ];
@@ -1087,6 +1121,20 @@ export default function (pi: ExtensionAPI) {
   // 仍保留两层可控性：
   //   ① `confirmWrites: true` 恢复逐次确认（仅交互模式可用，无 UI 仍拒绝）
   //   ② 无论开关如何，**每一次写操作都记进 writes.log** —— 事后可查"它到底发了什么"
+  // ── 主人回应采集（沉默衰减的唯一数据源）──────────────────────────────────
+  // 只记"人真的说了话"：定时巡检那条命令、扩展自己发的提示词都不算。
+  // 判据在 silence.isHumanTouch() 里，有单测。
+  pi.on("input", async (event) => {
+    try {
+      const text = String((event as { text?: unknown }).text ?? "");
+      const source = String((event as { source?: unknown }).source ?? "");
+      if (!isHumanTouch(text, source)) return;
+      await recordTouch(pathsFor().home, source, text);
+    } catch {
+      // 记不上不该影响用户输入流程
+    }
+  });
+
   pi.on("tool_call", async (event, ctx) => {
     const toolName = String(event.toolName ?? "");
     const input = event.input as unknown;

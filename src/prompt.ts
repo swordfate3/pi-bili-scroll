@@ -29,6 +29,8 @@ export interface RunPromptInput {
   autoComment?: boolean;
   /** 说话方式块（由 voice.ts 按真实评论统计生成；只在允许评论时注入） */
   voice?: string | null;
+  /** 沉默期那块事实（由 silence.ts 生成；正常档为 null） */
+  silence?: string | null;
   /** 评论频控（写进提示词，让模型知道撞限就该停） */
   commentLimits?: { perDay: number; minMinutes: number; cooldownDays: number };
   /** 家目录 */
@@ -134,6 +136,7 @@ export function buildRunPrompt(input: RunPromptInput): string {
     body,
     input.taste ? `\n${input.taste}` : "",
     input.autoComment && input.voice ? `\n${input.voice}` : "",
+    input.silence ? `\n${input.silence}` : "",
     `\n${buildCommentRules(input.autoComment ?? false, input.commentLimits)}`,
     personaBlock ?? "",
     "",
