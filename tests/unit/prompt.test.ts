@@ -110,17 +110,27 @@ test("autoComment 开着时给的是真配置的频控数字，而不是写死�
   assert.ok(!prompt.includes("## 本轮不发评论"), "开着时不得同时出现禁止段落");
 });
 
-test("开着时也压住数量冲动：挑中 N 条不等于要评 N 条", () => {
+test("开着时压住数量冲动，但不得把'不评'写成安全默认", () => {
   const prompt = buildRunPrompt({
     ...base,
     reportDetail: "brief",
     autoComment: true,
     commentLimits: { perDay: 4, minMinutes: 30, cooldownDays: 7 },
   });
-  assert.ok(prompt.includes("宁可不评"));
-  assert.ok(prompt.includes("挑中 4 条不代表要评 4 条"));
+  // 上限要有，但不发不能变成"更稳妥"的出口 ——
+  // 实测教训：只写"宁可不评"，结果是连续几轮一条都不评。
+  assert.ok(prompt.includes("本轮至少要评 1 条"), "必须给出下限，否则会退化成永不评论");
+  assert.ok(prompt.includes("挑中 4 条不代表要评 4 条"), "上限也要写，防刷屏");
+  assert.ok(!prompt.includes("宁可不评"), "不能把不作为写成推荐做法");
+  assert.ok(prompt.includes("不发不是“更稳妥”，是这项没做完"), "要点明不发是未完成而非保守");
   assert.ok(prompt.includes("讲得真好"), "必须点名禁止无信息量的套话");
   assert.ok(prompt.includes("撞到限制就**直接停**"), "撞限必须停手，不能重试");
+});
+
+test("没评论时必须在日报里交代原因（可审计，不靠猜）", () => {
+  const prompt = buildRunPrompt({ ...base, reportDetail: "brief", autoComment: true });
+  assert.ok(prompt.includes("日报里要写清本轮评了什么"));
+  assert.ok(prompt.includes("确实没评就写明为什么没评"));
 });
 
 test("开着时仍然禁止评没读到正文的视频（字幕挂错场景）", () => {
