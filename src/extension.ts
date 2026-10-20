@@ -21,7 +21,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { loadCharter } from "./charter.js";
-import { loadConfig, type BiliScrollConfig } from "./config.js";
+import { loadConfig, patchConfig, type BiliScrollConfig } from "./config.js";
 import { dayKey, pathsFor, reportPath, setTimeZone, type BiliScrollPaths } from "./home.js";
 import {
   CREDENTIAL_PATH,
@@ -316,6 +316,12 @@ export default function (pi: ExtensionAPI) {
         workdir: snap.config.workdir,
         persona,
         taste: tasteBlock,
+        autoComment: snap.config.autoComment,
+        commentLimits: {
+          perDay: snap.config.maxCommentsPerDay,
+          minMinutes: snap.config.minMinutesBetweenComments,
+          cooldownDays: snap.config.sameVideoCooldownDays,
+        },
         home: snap.paths.home,
       });
 
@@ -642,6 +648,58 @@ export default function (pi: ExtensionAPI) {
         nextReflectAt: Math.ceil((stats.total + 1) / config.tasteReflectEvery) * config.tasteReflectEvery,
       };
       return jsonResult(details);
+    },
+  });
+
+  pi.registerCommand("bili-comment", {
+    description:
+      "开关“巡检时自己发评论”：/bili-comment [on|off]（默认显示状态）。关着时不发任何评论，开着也仍受每日/间隔/同视频冷却限制。",
+    async handler(args: string, ctx: ExtensionCommandContext) {
+      const action = (args.trim().split(/\s+/)[0] || "").toLowerCase();
+      const snap = await snapshot();
+      const { config } = snap;
+
+      if (action === "on" || action === "off") {
+        const want = action === "on";
+        await patchConfig(snap.paths, { autoComment: want });
+        const lines = [want ? "已开启：巡检时可以自己评论。" : "已关闭：巡检只看不说。"];
+        if (want && config.confirmWrites) {
+          // 这两个开关会打架：允许发，但要求逐次确认 —— 而定时巡检是无 UI 的，确认弹不出来。
+          lines.push("⚠️ 但 `confirmWrites` 还是 true：无 UI 模式（定时巡检）下评论会被 fail-closed 拦下。要真发就再把它设为 false。");
+        }
+        if (want) {
+          lines.push(
+            `频控（代码硬限制）：每天 ≤${config.maxCommentsPerDay} 条 · 两条间隔 ≥${config.minMinutesBetweenComments} 分钟 · 同视频 ${config.sameVideoCooldownDays} 天内只评一次。`,
+          );
+        }
+        say(ctx, lines.join("\n"));
+        return;
+      }
+
+      if (action && action !== "status") {
+        say(ctx, `不认识的动作「${action}」。用法：/bili-comment [on|off]，不带参数看状态。`, "warning");
+        return;
+      }
+
+      // 状态：不光说开没开，还要说今天还能发几条 —— 否则“开着”和“能发”是两回事。
+      const now = new Date();
+      const state = pruneState(await loadQuota(quotaPath(snap.paths.home)), now);
+      const today = state.days[dayKey()];
+      const usedToday = today?.count ?? 0;
+      const remaining = Math.max(0, config.maxCommentsPerDay - usedToday);
+      const lastAt = today?.lastAt ? new Date(today.lastAt) : null;
+      const waitMin = lastAt
+        ? Math.max(0, config.minMinutesBetweenComments - Math.floor((now.getTime() - lastAt.getTime()) / 60000))
+        : 0;
+      const lines = [
+        `自己发评论：${config.autoComment ? "开" : "关"}${config.autoComment ? "（巡检时会按口味自己发）" : "（只看不说）"}`,
+        `今日已评 ${usedToday}/${config.maxCommentsPerDay} 条，还可发 ${remaining} 条`,
+        waitMin > 0 ? `距上次评论不足 ${config.minMinutesBetweenComments} 分钟，还要等 ${waitMin} 分钟` : "间隔限制：已满足",
+        `写操作确认（confirmWrites）：${config.confirmWrites ? "开（无 UI 模式下写操作会被拦）" : "关（直接执行，但每条都记进 writes.log）"}`,
+        "",
+        "开关：/bili-comment on 或 /bili-comment off",
+      ];
+      say(ctx, lines.join("\n"));
     },
   });
 

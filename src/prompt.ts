@@ -25,6 +25,10 @@ export interface RunPromptInput {
   persona?: { path: string; content: string; truncated?: boolean } | null;
   /** 插件自己长出来的口味块（只在巡检轮次注入，不进全局） */
   taste?: string | null;
+  /** 本轮是否允许它自己发评论（config.autoComment） */
+  autoComment?: boolean;
+  /** 评论频控（写进提示词，让模型知道撞限就该停） */
+  commentLimits?: { perDay: number; minMinutes: number; cooldownDays: number };
   /** 家目录 */
   home: string;
 }
@@ -36,6 +40,44 @@ export function effectiveKeywords(keywords: string[]): string[] {
   return keywords.length > 0 ? keywords : BUILTIN_KEYWORDS;
 }
 
+/**
+ * 评论授权段落。
+ *
+ * 两边都得写清楚，原因不同：
+ * - 开着时：`bili_comment` 工具一直在工具列表里，不告诉模型"现在允许"它也不会自己发；
+ *   而不把边界写死，它就会把"挑中 4 条"理解成"该评 4 条"。
+ * - 关着时：同样因为工具就在那儿，不明确禁止就有被顺手调用的可能。
+ */
+export function buildCommentRules(
+  autoComment: boolean,
+  limits: { perDay: number; minMinutes: number; cooldownDays: number } = {
+    perDay: 3,
+    minMinutes: 30,
+    cooldownDays: 7,
+  },
+): string {
+  if (!autoComment) {
+    return [
+      "## 本轮不发评论",
+      "",
+      "`autoComment` 为关：只看不说。不要调用 `bili_comment`，也不要发私信、动态或弹幕。",
+    ].join("\n");
+  }
+  return [
+    "## 本轮允许评论（`autoComment` 为开）",
+    "",
+    "可以用 `bili_comment` 在**你确实读完字幕并挑中**的视频下面发言。这是唯一一个会用账号对外公开发声的动作，按下面规矩来：",
+    "",
+    `- **宁可不评。** 挑中 ${limits.perDay} 条不代表要评 ${limits.perDay} 条。没有真正想说的话，本轮一条都不发是正常结果。`,
+    "- 评论必须指到具体内容：某句话、某个数字、某条论据、某个可以核对的事实。",
+    "- **禁止**放之四海皆准的话（“讲得真好”“学到了”“UP主辛苦”“一键三连”），这类比不评更差。",
+    "- 只评你读完正文的视频。没字幕、字幕和标题对不上的，一律不评。",
+    `- 代码已经硬限制：每天最多 ${limits.perDay} 条、两条至少隔 ${limits.minMinutes} 分钟、同一视频 ${limits.cooldownDays} 天内只评一次。`,
+    "  撞到限制就**直接停**，不要重试、不要换一种方式发。",
+    "- 工具报错或被拒绝就当本轮不能发，把情况写进日报，不要绕路。",
+  ].join("\n");
+}
+
 export function buildRunPrompt(input: RunPromptInput): string {
   const { charter, day, report, perDay, reportDetail, workdir, home } = input;
   const writeReport = reportDetail !== "none";
@@ -45,6 +87,7 @@ export function buildRunPrompt(input: RunPromptInput): string {
     `- 关注关键词：${effectiveKeywords(input.keywords).map((word) => `「${word}」`).join("、")}`,
     `- 每天最多挑：${perDay} 条`,
     `- 日报详细程度：${reportDetail}${writeReport ? "" : "（本轮不写日报文件）"}`,
+    `- 评论：${input.autoComment ? "允许（见下方规则）" : "本轮不发评论"}`,
   ];
   if (writeReport) bullets.push(`- 日报写到：${report}`);
   const personaBlock = input.persona
@@ -83,6 +126,7 @@ export function buildRunPrompt(input: RunPromptInput): string {
     "",
     body,
     input.taste ? `\n${input.taste}` : "",
+    `\n${buildCommentRules(input.autoComment ?? false, input.commentLimits)}`,
     personaBlock ?? "",
     "",
     "---",

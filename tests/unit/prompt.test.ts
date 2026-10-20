@@ -80,3 +80,50 @@ test("都没设置时按中性语气", () => {
   const prompt = buildRunPrompt({ ...base, reportDetail: "brief" });
   assert.ok(prompt.includes("- 人设：未设置（按中性语气说话）"));
 });
+
+// ── 评论授权 ────────────────────────────────────────────────────────────────
+// `bili_comment` 工具一直在工具列表里，所以"允不允许"只能靠这段文字表达。
+// 两条边界都要测死：关着时不能留任何模糊空间，开着时不能把频控写成写死的数字。
+
+test("autoComment 默认（未传/关）时明确禁止评论，且不出现任何授权措辞", () => {
+  const omitted = buildRunPrompt({ ...base, reportDetail: "brief" });
+  const off = buildRunPrompt({ ...base, reportDetail: "brief", autoComment: false });
+  for (const [name, prompt] of [["未传", omitted], ["false", off]] as const) {
+    assert.ok(prompt.includes("## 本轮不发评论"), `${name} 应有独立的禁止段落`);
+    assert.ok(prompt.includes("`autoComment` 为关"), `${name} 应点明开关名，便于排查`);
+    assert.ok(!prompt.includes("本轮允许评论"), `${name} 不得出现任何授权措辞`);
+    assert.ok(prompt.includes("- 评论：本轮不发评论"), `${name} 摘要行也要写清`);
+  }
+});
+
+test("autoComment 开着时给的是真配置的频控数字，而不是写死的默认值", () => {
+  const prompt = buildRunPrompt({
+    ...base,
+    reportDetail: "brief",
+    autoComment: true,
+    commentLimits: { perDay: 2, minMinutes: 45, cooldownDays: 14 },
+  });
+  assert.ok(prompt.includes("## 本轮允许评论"));
+  assert.ok(prompt.includes("每天最多 2 条"), "每日上限应是配置值 2，不是默认 3");
+  assert.ok(prompt.includes("至少隔 45 分钟"), "间隔应是配置值 45，不是默认 30");
+  assert.ok(prompt.includes("14 天内只评一次"), "冷却应是配置值 14，不是默认 7");
+  assert.ok(!prompt.includes("## 本轮不发评论"), "开着时不得同时出现禁止段落");
+});
+
+test("开着时也压住数量冲动：挑中 N 条不等于要评 N 条", () => {
+  const prompt = buildRunPrompt({
+    ...base,
+    reportDetail: "brief",
+    autoComment: true,
+    commentLimits: { perDay: 4, minMinutes: 30, cooldownDays: 7 },
+  });
+  assert.ok(prompt.includes("宁可不评"));
+  assert.ok(prompt.includes("挑中 4 条不代表要评 4 条"));
+  assert.ok(prompt.includes("讲得真好"), "必须点名禁止无信息量的套话");
+  assert.ok(prompt.includes("撞到限制就**直接停**"), "撞限必须停手，不能重试");
+});
+
+test("开着时仍然禁止评没读到正文的视频（字幕挂错场景）", () => {
+  const prompt = buildRunPrompt({ ...base, reportDetail: "brief", autoComment: true });
+  assert.ok(prompt.includes("没字幕、字幕和标题对不上的，一律不评"));
+});

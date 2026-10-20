@@ -7,7 +7,8 @@
  * 把整个宿主炸了。所以这里**逐字段做类型检查**，类型不对就回默认值并记一条 notice，
  * 绝不把未校验的值当标量用。
  */
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import type { BiliScrollPaths } from "./home.js";
 
 export type ReportDetail = "full" | "brief" | "none";
@@ -34,6 +35,14 @@ export interface BiliScrollConfig {
    * 无论开关如何，每次写操作都会记进 `writes.log` 审计。
    */
   confirmWrites: boolean;
+  /**
+   * 巡检轮次是否允许它自己发评论。**默认 false**（只看不说）。
+   *
+   * 这和 `confirmWrites` 是两件事：`confirmWrites` 管"发之前要不要问"，
+   * `autoComment` 管"这一轮到底允不允许发"。前者关着（默认）不代表后者开着 ——
+   * 过去正是这个混淆让人以为"已经允许评论了"，其实巡检那轮根本没被授权。
+   */
+  autoComment: boolean;
   /** 每天最多发几条评论（代码强制，防刷屏封号） */
   maxCommentsPerDay: number;
   /** 两条评论之间至少隔几分钟 */
@@ -68,6 +77,7 @@ export const DEFAULT_CONFIG: BiliScrollConfig = {
   workdir: null,
   qrDir: "downloads",
   confirmWrites: false,
+  autoComment: false,
   maxCommentsPerDay: 3,
   minMinutesBetweenComments: 30,
   sameVideoCooldownDays: 7,
@@ -215,6 +225,11 @@ export function normalizeConfig(raw: unknown): { config: BiliScrollConfig; notic
     else notices.push("confirmWrites 不是布尔值，已用默认值 false（直接执行）。");
   }
 
+  if (record.autoComment !== undefined) {
+    if (isBoolean(record.autoComment)) config.autoComment = record.autoComment;
+    else notices.push("autoComment 不是布尔值，已用默认值 false（只看不说）。");
+  }
+
   if (record.qrDir !== undefined) {
     const value = record.qrDir;
     if (typeof value === "string" && value.trim().length > 0) config.qrDir = value.trim();
@@ -222,4 +237,27 @@ export function normalizeConfig(raw: unknown): { config: BiliScrollConfig; notic
   }
 
   return { config, notices };
+}
+
+/**
+ * 只改配置里的某几个字段，其余原样保留。
+ *
+ * 为什么不"读出来、整份重写"：`loadConfig` 会把缺省字段补成默认值，如果拿
+ * 补全后的对象写回去，用户手写的注释和没被 normalize 认识的字段会一起消失。
+ * 所以这里读原始 JSON、只 merge 指定键。
+ */
+export async function patchConfig(
+  paths: BiliScrollPaths,
+  patch: Partial<Record<string, unknown>>,
+): Promise<void> {
+  let base: Record<string, unknown> = {};
+  try {
+    const raw = JSON.parse(await readFile(paths.config, "utf8")) as unknown;
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) base = raw as Record<string, unknown>;
+  } catch {
+    // 文件不存在或不是合法 JSON：从空对象起写，至少留下这次要改的键
+  }
+  const next = { ...base, ...patch };
+  await mkdir(dirname(paths.config), { recursive: true });
+  await writeFile(paths.config, JSON.stringify(next, null, 2) + "\n", "utf8");
 }
