@@ -53,3 +53,24 @@ test("--dry / --status 属于预览，不该触发确认", () => {
   assert.equal(isDryRunArgs(["--msg", "hi", "--go"]), false);
   assert.equal(isDryRunArgs([]), false);
 });
+
+// ── v0.3.0 新命令的分类 ─────────────────────────────────────────────────────
+// 默认"未知一律当写"能兜底，但只读命令被误当写会多弹一次确认；
+// 真正的风险在反方向：把 fav --go / auto 当成读就会绕过闸门和审计。
+
+test("v0.3.0 的只读命令被正确识别（不会被迫走写闸门）", () => {
+  for (const cmd of ["selftest", "dyn-keywords", "dyn-page"]) {
+    assert.equal(isWriteCommand(cmd), false, `${cmd} 不应被当成写操作`);
+  }
+});
+
+test("收藏与直播间自动回复必须算写操作", () => {
+  // fav 会改收藏夹（对外可见状态变了）；auto 会往直播间发弹幕。
+  // 这两个如果漏判，就等于绕过 confirmWrites 与 writes.log。
+  assert.equal(isWriteCommand("fav"), true);
+  assert.equal(isWriteCommand("auto"), true);
+});
+
+test("fav --dry 仍然算预览（不该逼用户确认预览）", () => {
+  assert.equal(isDryRunArgs(["BV1xxx", "--reason", "想再看", "--dry"]), true);
+});

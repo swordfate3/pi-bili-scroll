@@ -46,6 +46,10 @@ export const READ_COMMANDS = [
   "search",
   "covers",
   "whois",
+  // v0.3.0 新增的只读命令：启动体检 + 动态页诊断（都是 GET，不发东西）
+  "selftest",
+  "dyn-keywords",
+  "dyn-page",
 ] as const;
 
 /**
@@ -63,6 +67,9 @@ export const WRITE_COMMANDS = [
   "danmaku",
   "await",
   "reply-draft",
+  // v0.3.0 新增：收藏（写收藏夹）与直播间自动回复（往外发弹幕）
+  "fav",
+  "auto",
 ] as const;
 
 /** 命令 → 是否写操作。未知命令一律当写（fail closed）。 */

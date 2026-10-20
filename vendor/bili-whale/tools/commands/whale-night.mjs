@@ -53,17 +53,26 @@ const cfg = load(CFG, DEFAULTS)
 
 // 窗口：优先 windows[]；没有就退回 windowStart/windowEnd 一个窗口（兼容旧配置）
 // 每个窗口自带 wakes（醒来几次，2026-10-18 主人定）；0 = 这个窗口不醒 ✓
+// 2026-10-19：跨午夜窗口（end <= start，如 10:00→06:00）以前被 filter 直接丢掉
+//   → 整个窗口消失、鱼永远不醒（用户实测：设了 10:00→6:00，全天"窗口都过完了"）。
+//   现在规范成 [start, 1440+end)，wrap 标记，比较一律用分钟数（可 >1440）。
 function windowsOf(c) {
   const list = Array.isArray(c.windows) && c.windows.length
     ? c.windows
     : [{ start: c.windowStart ?? '20:00', end: c.windowEnd ?? '24:00', wakes: c.maxWakesPerDay ?? 1 }]
   return list
-    .map((w) => ({
-      start: parseHHMM(w.start),
-      end: parseHHMM(w.end),
-      label: `${w.start}–${w.end}`,
-      wakes: Math.max(0, Number(w.wakes ?? 1) || 0),
-    }))
+    .map((w) => {
+      const start = parseHHMM(w.start)
+      let end = parseHHMM(w.end)
+      if (end <= start) end += 1440
+      return {
+        start,
+        end,
+        wrap: end > 1440,
+        label: `${w.start}–${w.end}`,
+        wakes: Math.max(0, Number(w.wakes ?? 1) || 0),
+      }
+    })
     .filter((w) => w.end > w.start)
 }
 const WINDOWS = windowsOf(cfg)
@@ -79,30 +88,70 @@ const wakesToday = (s) => (s.date === today() ? Number(s.wakes ?? 0) : 0)
 function makePlan() {
   const now = nowMin()
   const done = wakesToday(st)
-  if (MAX_WAKES === 0) return { date: today(), action: 'done', wakes: done, reason: '所有窗口的"醒来次数"都是 0 → 今天不醒' }
-  if (done >= MAX_WAKES) return { date: today(), action: 'done', wakes: done, reason: `今天已经醒了 ${done} 次（上限 ${MAX_WAKES}）` }
-  // 还没结束的窗口
-  const open = WINDOWS.filter((w) => w.end > now)
-  if (!open.length) return { date: today(), action: 'done', wakes: done, reason: '今天的窗口都过完了' }
-  // 每个窗口能醒 w.wakes 次；用 usedCount 记今天每个窗口已经用掉几次（2026-10-18 修：以前一个窗口只能用一次 ✗）
+  // 2026-10-20：这一夜已经处理完（含"不看"已投递）→ 不再重排 ✓
+  if (st?.date === today() && st.done === true) {
+    return { date: today(), action: 'done', done: true, wakes: done, reason: '这一夜已经处理过 ✓' }
+  }
+  if (MAX_WAKES === 0) return { date: today(), action: 'done', done: true, wakes: done, reason: '所有窗口的"醒来次数"都是 0 → 今天不醒' }
+  if (done >= MAX_WAKES) return { date: today(), action: 'done', done: true, wakes: done, reason: `今天已经醒了 ${done} 次（上限 ${MAX_WAKES}）` }
+  // 还没结束的窗口（跨午夜窗口：任何时刻要么在窗口内、要么在今天开场前 → 都算开放）
+  const open = WINDOWS.filter((w) => w.wrap ? true : w.end > now)
+  if (!open.length) return { date: today(), action: 'done', done: true, wakes: done, reason: '今天的窗口都过完了' }
+  // ⚠️ 2026-10-20：**这一夜的"不看"已经投递过了** → 直接 done，别再排（她会反复被叫醒 ✗）
+  if (st?.date === today() && st.action === 'skip' && st.fired === true) {
+    return { date: today(), action: 'done', done: true, wakes: done, reason: '这一夜的「不看」已经处理过 ✓' }
+  }
+  // 每个窗口能醒 w.wakes 次；usedCount 记今天每个窗口已经【真正看过】几次
   const usedCount = st.date === today() && st.usedCount && typeof st.usedCount === 'object' ? { ...st.usedCount } : {}
   const byUsed = (list) => list.filter((w) => (usedCount[w.label] ?? 0) < w.wakes)
-  let pool = byUsed(open)
-  if (!pool.length) return { date: today(), action: 'done', wakes: done, reason: '所有窗口的醒来次数都用完了' }
+  const pool = byUsed(open)
+  if (!pool.length) return { date: today(), action: 'done', done: true, wakes: done, reason: '所有窗口的醒来次数都用完了' }
   const w = pool[Math.floor(Math.random() * pool.length)]
-  usedCount[w.label] = (usedCount[w.label] ?? 0) + 1
-  const withinWindow = `${w.label} 第 ${usedCount[w.label]}/${w.wakes} 次`
+
+  // ── 2026-10-20 重写（社区反馈 + 实测）──────────────────────────────
+  //   旧逻辑：usedCount 先 +1 → 再判断 skip → skip 也把"醒来次数"吃掉了 ✗
+  //     结果：单窗口用户一掷到"不看"，那个窗口就作废 → 整晚不醒 → 不写日记、不推送 ✗
+  //   新逻辑：nth 只算不写回 ✓ 挑完时刻 ✓ skip 直接返回（不含 usedCount 变更）✓
+  //     只有真正 wake 时才 usedCount[w.label] = nth ✓
+  const nth = (usedCount[w.label] ?? 0) + 1
+  const withinWindow = `${w.label} 第 ${nth}/${w.wakes} 次`
+
+  // 挑时刻（先算，skip 也要带 at：否则到点判断无从谈起）
+  // ⚠️ 2026-10-20：如果【今天已有未到点的 skip 计划】，必须沿用它的 at ✗ 不能重新随机
+  //   否则每 tick 重排一次 → at 被"顺延到 now+1" → 永远追不上 → pass 永远 false → 她永远不醒 ✗
+  //   2026-10-20 修：**不要**加 "Number(st.at) > now" —— at 过了也要沿用 ✓
+  //   否则过了点之后又重随机 → at 一路上涨 → 永远追不上 / 或反复投递 ✗（她自己诊断出来的）
+  const keepSkipAt = st?.date === today() && st?.action === 'skip'
+    && st?.fired !== true                       // 已投递过就不再沿用（走下面的 done 分支）
+    && Number.isFinite(Number(st.at))
+    && String(st.window ?? '') === String(w.label)
+  let at = keepSkipAt
+    ? Number(st.at)
+    : w.start + Math.floor(Math.random() * Math.max(1, w.end - w.start))
+  if (w.wrap && at >= 1440) at -= 1440   // 落在午夜后那段 → 折算回当天分钟
+  if (!keepSkipAt && at <= now) {
+    // 该窗口已开始 → 顺延一点点；顺延点必须仍在窗口内
+    at = now + 1 + Math.floor(Math.random() * 10)
+    if (at >= 1440) at -= 1440
+    if (w.wrap) {
+      const gapStart = w.end - 1440
+      if (at >= gapStart && at < w.start) at = w.start   // 落在缝里 → 推到下次开场
+    } else {
+      at = Math.min(w.end - 1, at)
+    }
+  }
 
   if (Math.random() < Number(cfg.skipChance ?? 0.3)) {
     return {
-      date: today(), action: 'skip', wakes: done, usedCount, window: w.label, endAt: w.end, withinWindow,
+      date: today(), action: 'skip', fired: false, wakes: done, usedCount, window: w.label, endAt: w.end, withinWindow,
+      at, atText: hhmm(at),   // 不看也要"到点"✓（scheduler 会等到 at 才叫醒）
       reason: `这次不想看（掷骰子掷到了「不看」那 ${Math.round((Number(cfg.skipChance ?? 0.3)) * 100)}%）`,
     }
   }
-  let at = w.start + Math.floor(Math.random() * Math.max(1, w.end - w.start))
-  if (at <= now) at = Math.min(w.end - 1, now + 1 + Math.floor(Math.random() * 10)) // 该窗口已开始 → 顺延一点点
+
+  usedCount[w.label] = nth   // 只有真要看的才消耗额度 ✓（skip 不消耗 ✓）
   return {
-    date: today(), action: 'wake', at, atText: hhmm(at), wakes: done, usedCount, window: w.label, withinWindow,
+    date: today(), action: 'wake', fired: false, at, atText: hhmm(at), wakes: done, usedCount, window: w.label, withinWindow,
     roll: 'watch', maxVideos: cfg.maxVideos ?? 5, createdAt: new Date().toISOString(),
   }
 }
@@ -173,7 +222,10 @@ if (cmd === 'clock') {
 
   if (p.action === 'skip') {
     // 不看：睡到**这个窗口的**末，再退出 —— 退出同样会叫醒她，但醒来只需看一眼"这次不看"
-    const end = Number(p.endAt) || (WINDOWS[WINDOWS.length - 1]?.end ?? nowMin())
+    let end = Number(p.endAt) || (WINDOWS[WINDOWS.length - 1]?.end ?? nowMin())
+    // 2026-10-19：跨午夜窗口的 end 是规范化分钟（>1440）；若当前已在午夜后那段，
+    // 折算回当天分钟，否则会算出"睡到 20 小时后"的荒谬等待
+    if (end > 1440 && nowMin() < end - 1440) end -= 1440
     const waitMin = Math.max(0, end - nowMin())
     console.log(`[生物钟] 这次不看，${waitMin} 分钟后（窗口 ${p.window ?? ''} 末）退出`)
     for (let i = 0; i < waitMin * 60; i += 60) await sleep(60_000)
@@ -182,10 +234,12 @@ if (cmd === 'clock') {
     process.exit(0)
   }
 
-  // 看：睡到随机点
-  while (nowMin() < p.at) {
-    const left = (p.at - nowMin()) * 60_000
-    await sleep(Math.min(60_000, Math.max(5_000, left)))
+  // 看：睡到随机点（2026-10-19：跨午夜窗口的 at 可能是"明天"的分钟 → 差额 +1440，
+  //   否则 now=23:00、at=00:30 会被判成"已过"而立刻醒）
+  let waitMin = p.at - nowMin()
+  if (waitMin < 0) waitMin += 1440
+  if (waitMin > 0) {
+    for (let i = 0; i < waitMin * 60; i += 60) await sleep(60_000)
   }
   const woke = { ...p, woke: true, wakes: wakesToday(p) + 1, wokeAt: new Date().toISOString() }
   save(STATE, woke)

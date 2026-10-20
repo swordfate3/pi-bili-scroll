@@ -73,7 +73,7 @@ for (const kw of prefs.slice(0, 6)) {
 // ── #3 更多来源（2026-10-18 加，Kimi 评审指出：只搜关键词 = 只刷"搜索"，不是刷 B 站）
 //   --source search（默认）| popular（热门）| rank（排行榜）| all（三个都要）
 const SOURCE_HOT = String((process.argv.find((a) => a.startsWith('--source=')) ?? '').split('=')[1] ?? '')
-  || (process.argv.includes('--source') ? String(process.argv[process.argv.indexOf('--source') + 1] ?? 'all') : 'search')
+  || (process.argv.includes('--source') ? String(process.argv[process.argv.indexOf('--source') + 1] ?? 'all') : 'all')
 async function fetchPopular() {
   const j = await (await fetch('https://api.bilibili.com/x/web-interface/popular?pn=1&ps=20', { headers: H })).json()
   for (const it of (j?.data?.list ?? [])) {
@@ -108,21 +108,103 @@ try { if (SOURCE_HOT === 'rank' || SOURCE_HOT === 'all') await fetchRank() } cat
 try { if (SOURCE_HOT === 'following' || SOURCE_HOT === 'all') await fetchFollowing() } catch (e) { console.error(`（关注源取不到，跳过：${String(e.message).slice(0, 60)}）`) }
 console.error(`[来源] ${SOURCE_HOT === 'all' ? '搜索 + 热门 + 排行 + 关注' : SOURCE_HOT === 'popular' ? '热门' : SOURCE_HOT === 'rank' ? '排行' : SOURCE_HOT === 'following' ? '关注' : '搜索'}`)
 
-const uniq = [...new Map(pool.map((x) => [x.bv, x])).values()].filter((x) => !seen.has(x.bv))
-// 排序：偏好是"看得懂 + 有反应"，所以短视频 + 弹幕密度优先，兼顾播放量
-uniq.sort((a, b) => (b.dm / Math.max(30, b.d)) * 1 + Math.log10(b.play + 1) * 3 - ((a.dm / Math.max(30, a.d)) + Math.log10(a.play + 1) * 3))
+// ── 反馈回流（2026-10-20 加，主人定：B 也做）────────────────────────────
+//   feedback.json 里 kind='like' 的事件带 videoTitle → 对被赞视频【标题相似】的候选加权
+//   相似度用字符二元组 Jaccard（中文不用分词也能用 ✓）
+const FEEDBACK = path.join(HOME, '.bili-ai', 'feedback.json')
+let likedEvents = []
+try {
+  const fb = JSON.parse(fs.readFileSync(FEEDBACK, 'utf8'))
+  likedEvents = (fb.events ?? [])
+    .filter((e) => e && (e.kind === 'like' || (typeof e.note === 'string' && /BV[0-9A-Za-z]{10}/.test(e.note))))
+    .filter((e) => String(e.videoTitle ?? '').trim())   // 没有标题的旧事件学不到东西，跳过 ✓
+} catch { /* 没有反馈就零加权 */ }
+const favBVs = new Set()
+try {
+  const fj = JSON.parse(fs.readFileSync(path.join(HOME, '.bili-ai', 'favorites.json'), 'utf8'))
+  for (const x of (fj.items ?? [])) if (x?.bv) favBVs.add(x.bv)
+} catch {}
+const likedBVs = new Set()
+try {
+  const fb = JSON.parse(fs.readFileSync(FEEDBACK, 'utf8'))
+  for (const e of (fb.events ?? [])) if (e?.bv) likedBVs.add(e.bv)
+} catch {}
+  // 抽主题词：拉丁词（≥2）+ 中文 3-4 字 n-gram（更具体，避免"我为/添加"这类噪音）
+  // 为什么不比标题相似度（Jaccard）：实测"几乎改一个字"的两条标题相似度只有 0.036 ✗
+  //   主题词方案能学到"dsh""大肥鱼"这种真正跨标题复用的信号 ✓
+  const STOP_WORDS = new Set(['我为', '添加', '开屏', '广告', '这个', '那个', '什么', '自己', '可以', '就是', '一个'])
+  const ownerName = String(config().owner?.name ?? '')
+  const learnTokens = (text) => {
+    const out = new Set()
+    // ⚠️ ownerName 为空时 new RegExp('') 会在每个字之间插空格 → 必须先判断 ✗（实测踩过）
+    const base = ownerName ? String(text).replace(new RegExp(ownerName, 'g'), ' ') : String(text)
+    const t = base.replace(/@\S+/g, ' ')
+    for (const m of t.matchAll(/[A-Za-z][A-Za-z0-9]{1,}/g)) if (m[0].length >= 2) out.add(m[0].toLowerCase())
+    for (const m of t.matchAll(/[\u4e00-\u9fa5]{2,}/g)) {
+      const run = m[0]
+      for (const n of [3, 4]) for (let i = 0; i + n <= run.length; i += 1) {
+        const g = run.slice(i, i + n)
+        if (!STOP_WORDS.has(g)) out.add(g)
+      }
+    }
+    return [...out]
+  }
+  // 她自己收藏过的（favorites.json）也算"品味信号" ✓ 和"被赞过的"并列
+  let favItems = []
+  try {
+    const fj = JSON.parse(fs.readFileSync(path.join(HOME, '.bili-ai', 'favorites.json'), 'utf8'))
+    favItems = (fj.items ?? []).filter((x) => x && x.bv)
+  } catch {}
+  const learnedTokens = [...new Set([
+    ...likedEvents.flatMap((e) => learnTokens(String(e.videoTitle ?? '') + ' ' + String(e.comment ?? ''))),
+    ...favItems.flatMap((x) => learnTokens(String(x.title ?? '') + ' ' + String(x.reason ?? ''))),
+  ])]
+  const learnedHitsOf = (title) => learnedTokens.filter((tok) => title.toLowerCase().includes(tok)).length
+  // 每条命中 +2.5，最多 +7.5（不压过偏好命中的主权重 ✓）
+  const boostOf = (title) => Math.min(7.5, learnedHitsOf(title) * 2.5)
+
+// ── 偏好命中与排序（2026-10-20 重写，主人定：不要对高播放量有偏向 ✗）────────────
+//   旧：弹幕密度 + log10(播放)×3  → 大 UP 的爆款永远霸榜 ✗
+//   新：log10(1+弹幕密度)×3 + 偏好命中×4 + 反馈学习×2.5（封顶 7.5）→ 播放量彻底移出 ✓
+//   为什么密度要取 log：不取时"92 秒 15027 弹幕"那条得 163 分，偏好加满也压不过 ✗（实测）
+const prefTokens = prefs.map((p) => ({
+  label: p,
+  tokens: [...new Set([p, ...String(p).split(/[\s·,，、/]+/).filter((t) => t.length >= 2)])],
+}))
+const hitsOf = (title) => prefTokens.filter((p) => p.tokens.some((tok) => title.includes(tok))).map((p) => p.label)
+const densityOf = (x) => Math.log10(1 + x.dm / Math.max(30, x.d))
+// 2026-10-20：排除她自己的视频（实测刷到过自己的《大肥鱼成精了》✗ 别让自己看自己）
+const selfName = String(config().self?.name ?? "")
+const uniq = [...new Map(pool.map((x) => [x.bv, x])).values()]
+  .filter((x) => !seen.has(x.bv) && !likedBVs.has(x.bv) && !favBVs.has(x.bv))
+  .filter((x) => !(selfName && String(x.up ?? "").includes(selfName)))
+const scoreOf = (x) => densityOf(x) * 3 + hitsOf(x.t).length * 4 + boostOf(x.t)
+uniq.sort((a, b) => scoreOf(b) - scoreOf(a))
+for (const x of uniq) { x._hits = hitsOf(x.t); x._score = scoreOf(x) }
+
+// 多样性：同一"命中和类"最多 PER 条；完全没命中的最多 1 条（防凑数 ✗）
+const kindUsed = {}
+const diversified = []
+for (const x of uniq) {
+  const key = x._hits.length ? x._hits.join('+') : '__none__'
+  kindUsed[key] = kindUsed[key] ?? 0
+  if (kindUsed[key] >= (x._hits.length ? PER : 1)) continue
+  kindUsed[key] += 1
+  diversified.push(x)
+}
 
 console.log(`偏好（来自日记）: ${prefs.join(' · ')}`)
+console.log(`反馈回流: 被赞 ${likedEvents.length} 条 · 她收藏 ${favItems.length} 条 → 学会 ${learnedTokens.length} 个主题词`)
 console.log(`已看过/已评论过（已排除）: ${seen.size} 个 BV`)
 console.log(`候选池: ${pool.length} 条 → 去重去已看后 ${uniq.length} 条\n`)
 console.log(`今天可以看这几条（每词最多 ${PER} 条，共 ${N} 条）：`)
 const perKw = {}
 let shown = 0
-for (const x of uniq) {
+for (const x of diversified) {
   if (shown >= N) break
   perKw[x.kw] = perKw[x.kw] ?? 0
-  if (perKw[x.kw] >= PER) continue
+  // 多样性已在上一步做过 → 这里不再二次限流 ✓
   perKw[x.kw] += 1; shown += 1
-  console.log(`  ${String(shown).padStart(2)}. ${x.bv}  ${String(x.d).padStart(4)}s  弹幕${String(x.dm).padStart(7)}  播放${String(x.play).padStart(9)}  ${x.t.slice(0, 40)}  @${x.up}`)
+  console.log(`  ${String(shown).padStart(2)}. ${x.bv}  ${String(x.d).padStart(4)}s  弹幕${String(x.dm).padStart(7)}  播放${String(x.play).padStart(9)}  ${x.t.slice(0, 40)}  @${x.up} ${x._hits.length ? "[" + x._hits.join("+") + "]" : ""}`)
 }
 console.log('\n看完跑：node bili.mjs debrief <BV>   → 然后把"想法"写进日记的「想说」区（不发）')
