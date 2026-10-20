@@ -54,6 +54,20 @@ import {
 } from "./taste.js";
 import { isDryRunArgs, isKnownCommand, isWriteCommand, runWhale, READ_COMMANDS, WRITE_COMMANDS } from "./whale.js";
 import { buildRunPrompt, effectiveKeywords } from "./prompt.js";
+import {
+  appendVoice,
+  appendVoiceNote,
+  appendVoiceReflection,
+  buildVoiceBlock,
+  computeVoiceStats,
+  deriveVoiceTraits,
+  loadVoiceProfile,
+  readVoice,
+  readVoiceNotes,
+  readVoiceReflections,
+  saveVoiceProfile,
+  voiceNotesPath,
+} from "./voice.js";
 import { waitForRound } from "./round.js";
 
 interface Snapshot {
@@ -86,6 +100,35 @@ async function snapshot(): Promise<Snapshot> {
     // 日报不存在 = 今天还没刷过。不是错误。
   }
   return { paths, day, report, ranToday, reportMtime, reportBytes, config, notices };
+}
+
+/**
+ * 拼出“说话方式”上下文。和口味块同一套逻辑：
+ * 数值由代码算（优先用反思时定型的快照，没有就现场推导），
+ * 模型写的反思与用户提的要求只作为文字带上。
+ */
+async function buildVoiceContext(snap: Snapshot): Promise<string | null> {
+  if (!snap.config.voiceEnabled) return null;
+  const home = snap.paths.home;
+  const entries = await readVoice(home);
+  const stats = computeVoiceStats(entries);
+  if (stats.window === 0) return null;
+  const profile = await loadVoiceProfile(home);
+  const traits =
+    profile?.traits ??
+    deriveVoiceTraits(entries, {
+      minSample: snap.config.voiceMinSample,
+      halfLifeDays: snap.config.voiceHalfLifeDays,
+    });
+  return buildVoiceBlock(stats, {
+    traits,
+    traitsSource: profile
+      ? `快照 v${profile.version}，代码从真实评论推导`
+      : "现场推导（还没到反思门槛）",
+    reflections: await readVoiceReflections(home),
+    notes: await readVoiceNotes(home),
+    minSample: snap.config.voiceMinSample,
+  });
 }
 
 /**
@@ -317,6 +360,8 @@ export default function (pi: ExtensionAPI) {
         persona,
         taste: tasteBlock,
         autoComment: snap.config.autoComment,
+        // 说话方式和口味用同一套机制：数值由代码从真实评论推导，模型只能写自述。
+        voice: snap.config.autoComment ? await buildVoiceContext(snap) : null,
         commentLimits: {
           perDay: snap.config.maxCommentsPerDay,
           minMinutes: snap.config.minMinutesBetweenComments,
@@ -532,8 +577,90 @@ export default function (pi: ExtensionAPI) {
       });
       if (result.ok) {
         await saveQuota(quotaFile, recordComment(state, params.bvid, now));
+        // 只有真发出去的才进语料 —— 说话方式的统计必须基于“别人真的看到过的话”。
+        await appendVoice(pathsFor().home, { at: now.toISOString(), bvid: params.bvid, text: params.text });
       }
-      return jsonResult({ ...result, at, remainingToday: Math.max(0, (decision.remainingToday ?? 1) - 1) });
+      // 和口味一样：攒够 N 条提醒做一次自述反思（数值不靠反思，靠代码算）。
+      const allVoice = await readVoice(pathsFor().home);
+      const needReflect = result.ok && allVoice.length > 0 && allVoice.length % config.voiceReflectEvery === 0;
+      return jsonResult({
+        ...result,
+        at,
+        remainingToday: Math.max(0, (decision.remainingToday ?? 1) - 1),
+        needReflect,
+        ...(needReflect
+          ? {
+              hint: `已发 ${allVoice.length} 条评论，调 bili_voice_reflect 写一句：这几条共同的毛病是什么（只说毛病，不评优劣）。`,
+            }
+          : {}),
+      });
+    },
+  });
+
+  pi.registerTool({
+    name: "bili_voice_reflect",
+    label: "记录一次说话方式的反思",
+    description:
+      "写一句「我最近这几条评论共同的毛病是什么」。只保存文字；说话方式数值由代码从真实评论统计推导，模型无法直接设定。",
+    promptSnippet: "bili_voice_reflect: 写一句评论写法的反思（数值由代码算，模型只写文字）",
+    parameters: Type.Object(
+      { summary: Type.String({ description: "一句话，说这几条评论共同的问题", maxLength: 500 }) },
+      { additionalProperties: false },
+    ),
+    async execute(_id: string, params: { summary: string }) {
+      const home = pathsFor().home;
+      const { config } = await loadConfig(pathsFor());
+      const entries = await readVoice(home);
+      const text = String(params.summary).trim();
+      if (!text) return jsonResult({ ok: false, error: "反思不能为空" });
+      await appendVoiceReflection(home, text);
+      const traits = deriveVoiceTraits(entries, {
+        minSample: config.voiceMinSample,
+        halfLifeDays: config.voiceHalfLifeDays,
+      });
+      const profile = await saveVoiceProfile(home, traits, {
+        total: entries.length,
+        window: Math.min(entries.length, 10),
+      });
+      return jsonResult({
+        ok: true,
+        version: profile.version,
+        traits,
+        note: "文字已存档；数值由代码从真实评论推导，模型无法直接设定。",
+      });
+    },
+  });
+
+  pi.registerTool({
+    name: "bili_voice_status",
+    label: "看说话方式",
+    description:
+      "只读查看评论写法的统计与风格数值：真实评论条数、长度/具体度/口语度/套话命中、当前快照版本。不联网、不写文件。",
+    promptSnippet: "bili_voice_status: 看自己评论写法的统计与风格数值",
+    annotations: { readOnlyHint: true },
+    parameters: Type.Object({}, { additionalProperties: false }),
+    async execute() {
+      const home = pathsFor().home;
+      const { config } = await loadConfig(pathsFor());
+      const entries = await readVoice(home);
+      const stats = computeVoiceStats(entries);
+      const profile = await loadVoiceProfile(home);
+      const traits =
+        profile?.traits ??
+        deriveVoiceTraits(entries, {
+          minSample: config.voiceMinSample,
+          halfLifeDays: config.voiceHalfLifeDays,
+        });
+      const reflections = await readVoiceReflections(home);
+      return jsonResult({
+        enabled: config.voiceEnabled,
+        total: entries.length,
+        stats,
+        traits,
+        traitsSource: profile ? `快照 v${profile.version}（代码推导）` : "现场推导（尚未反思定型）",
+        reflections: reflections.length,
+        nextReflectAt: Math.ceil((entries.length + 1) / config.voiceReflectEvery) * config.voiceReflectEvery,
+      });
     },
   });
 
@@ -698,6 +825,78 @@ export default function (pi: ExtensionAPI) {
         `写操作确认（confirmWrites）：${config.confirmWrites ? "开（无 UI 模式下写操作会被拦）" : "关（直接执行，但每条都记进 writes.log）"}`,
         "",
         "开关：/bili-comment on 或 /bili-comment off",
+      ];
+      say(ctx, lines.join("\n"));
+    },
+  });
+
+  pi.registerCommand("bili-voice", {
+    description:
+      "看它写评论的习惯（长度/开头重复/具体信息/套话），并可提语气要求：/bili-voice [note 一句话 | reset]。",
+    async handler(args: string, ctx: ExtensionCommandContext) {
+      const raw = args.trim();
+      const action = (raw.split(/\s+/)[0] || "").toLowerCase();
+      const home = (await snapshot()).paths.home;
+
+      if (action === "note") {
+        const text = raw.slice(action.length).trim();
+        if (!text) {
+          say(ctx, "用法：/bili-voice note 别用“我觉得”开头，写意见时先把话说清楚", "warning");
+          return;
+        }
+        await appendVoiceNote(home, text);
+        say(ctx, `已记下：${text}\n下次巡检写评论时会带上这条（优先级高于自动统计）。`);
+        return;
+      }
+
+      if (action === "reset") {
+        try {
+          rmSync(voiceNotesPath(home), { force: true });
+          say(ctx, "已清空语气要求（真实评论的语料不受影响）。");
+        } catch (error) {
+          say(ctx, `清空失败：${String(error)}`, "error");
+        }
+        return;
+      }
+
+      if (raw && !["status", "show"].includes(action)) {
+        say(ctx, `不认识的动作「${action}」。用法：/bili-voice [note 一句话 | reset]`, "warning");
+        return;
+      }
+
+      const entries = await readVoice(home);
+      const notes = await readVoiceNotes(home);
+      const stats = computeVoiceStats(entries);
+      if (stats.window === 0) {
+        say(ctx, "还没发过评论，没有可统计的语料。（先 /bili-comment on，再跑一轮）");
+        return;
+      }
+      const { config } = await snapshot();
+      const profile = await loadVoiceProfile(home);
+      const traits =
+        profile?.traits ??
+        deriveVoiceTraits(entries, {
+          minSample: config.voiceMinSample,
+          halfLifeDays: config.voiceHalfLifeDays,
+        });
+      const reflections = await readVoiceReflections(home);
+      const pct = (value: number) => `${Math.round(value * 100)}%`;
+      const lines = [
+        `累计真发出去 ${stats.total} 条评论，本次统计最近 ${stats.window} 条`,
+        `风格：具体度 ${traits.concreteness} / 口语度 ${traits.conversationality} / 变化度 ${traits.variety} / 精炼度 ${traits.brevity}`,
+        `（${profile ? `快照 v${profile.version}，代码推导` : "现场推导，还没到反思门槛"}；样本 ${stats.window}/${config.voiceMinSample} 才定型）`,
+        `长度：平均 ${stats.avgChars} 字（${stats.minChars}–${stats.maxChars}），起伏 ${stats.spread}，平均 ${stats.avgSentences} 句`,
+        `具体信息：${pct(stats.concreteRate)}　口语词：${pct(stats.colloquialRate)}　提问：${pct(stats.questionRate)}`,
+        stats.repeatedOpenings.length > 0
+          ? `开头重复：${stats.repeatedOpenings.map((item) => `「${item.opening}」×${item.count}`).join("、")}`
+          : "开头重复：无",
+        stats.bannedHits.length > 0
+          ? `套话命中：${stats.bannedHits.map((item) => `「${item.phrase}」×${item.count}`).join("、")}`
+          : "套话命中：无",
+        `自述反思：${reflections.length} 条（每 ${config.voiceReflectEvery} 条评论一次）`,
+        notes.length > 0 ? `你提的语气要求 ${notes.length} 条（最近：${notes[notes.length - 1]}）` : "你提的语气要求：无",
+        "",
+        "提要求：/bili-voice note 你说怎么写",
       ];
       say(ctx, lines.join("\n"));
     },
@@ -875,7 +1074,11 @@ export default function (pi: ExtensionAPI) {
       }
     } else if (isWriteInvocation(toolName, input)) {
       description = toolName;
-      preview = findText(input)?.slice(0, 300) ?? "";
+      // ⚠️ 审计要能回答“发到哪条视频下”，不能只记正文 ——
+      // 只记正文的话，事后想核对“这句到底挂在哪个视频”就无据可查（实测踩过）。
+      const bvid = String((input as { bvid?: unknown })?.bvid ?? "").trim();
+      const body = findText(input)?.slice(0, 300) ?? "";
+      preview = bvid ? `${bvid} ${body}` : body;
     }
 
     if (description) {

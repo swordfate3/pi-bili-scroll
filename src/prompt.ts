@@ -27,6 +27,8 @@ export interface RunPromptInput {
   taste?: string | null;
   /** 本轮是否允许它自己发评论（config.autoComment） */
   autoComment?: boolean;
+  /** 说话方式块（由 voice.ts 按真实评论统计生成；只在允许评论时注入） */
+  voice?: string | null;
   /** 评论频控（写进提示词，让模型知道撞限就该停） */
   commentLimits?: { perDay: number; minMinutes: number; cooldownDays: number };
   /** 家目录 */
@@ -75,6 +77,8 @@ export function buildCommentRules(
     `- 代码已经硬限制：每天最多 ${limits.perDay} 条、两条至少隔 ${limits.minMinutes} 分钟、同一视频 ${limits.cooldownDays} 天内只评一次。`,
     "  撞到限制就**直接停**，不要重试、不要换一种方式发。",
     "- 工具报错或被拒绝就当本轮不能发，把情况写进日报，不要绕路。",
+    "- `bili_comment` 返回 `needReflect: true` 时，调 `bili_voice_reflect` 写一句：",
+    "  这几条评论共同的毛病是什么（只说毛病）。数值不靠你自述 —— 由代码从真实评论算。",
   ].join("\n");
 }
 
@@ -126,6 +130,7 @@ export function buildRunPrompt(input: RunPromptInput): string {
     "",
     body,
     input.taste ? `\n${input.taste}` : "",
+    input.autoComment && input.voice ? `\n${input.voice}` : "",
     `\n${buildCommentRules(input.autoComment ?? false, input.commentLimits)}`,
     personaBlock ?? "",
     "",

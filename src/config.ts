@@ -60,6 +60,14 @@ export interface BiliScrollConfig {
   maxHeavyReadsPerRound: number;
   /** 是否启用插件自己的口味/性格（只作用于 /bili-scroll 轮次） */
   tasteEnabled: boolean;
+  /** 说话方式是否也跟着自进化（只作用于评论） */
+  voiceEnabled: boolean;
+  /** 说话方式至少攒多少条真实评论才允许定型 */
+  voiceMinSample: number;
+  /** 每多少条评论触发一次自述反思 */
+  voiceReflectEvery: number;
+  /** 说话方式的半衰期（天）：表达变化比口味快，所以默认 21 天 */
+  voiceHalfLifeDays: number;
   /** 某类标签至少被看到几次才允许进入偏好 */
   tasteMinSample: number;
   /** 观察的时间衰减半衰期（天），防"最近看多了就固化" */
@@ -85,6 +93,10 @@ export const DEFAULT_CONFIG: BiliScrollConfig = {
   maxReadsPerRound: 10,
   maxHeavyReadsPerRound: 2,
   tasteEnabled: true,
+  voiceEnabled: true,
+  voiceMinSample: 5,
+  voiceReflectEvery: 5,
+  voiceHalfLifeDays: 21,
   tasteMinSample: 8,
   tasteHalfLifeDays: 14,
   tasteReflectEvery: 10,
@@ -228,6 +240,21 @@ export function normalizeConfig(raw: unknown): { config: BiliScrollConfig; notic
   if (record.autoComment !== undefined) {
     if (isBoolean(record.autoComment)) config.autoComment = record.autoComment;
     else notices.push("autoComment 不是布尔值，已用默认值 false（只看不说）。");
+  }
+
+  if (record.voiceEnabled !== undefined) {
+    if (isBoolean(record.voiceEnabled)) config.voiceEnabled = record.voiceEnabled;
+    else notices.push("voiceEnabled 不是布尔值，已用默认值 true。");
+  }
+
+  for (const key of ["voiceMinSample", "voiceReflectEvery", "voiceHalfLifeDays"] as const) {
+    const value = record[key];
+    if (value === undefined) continue;
+    if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+      config[key] = value;
+    } else {
+      notices.push(`${key} 不是正整数，已用默认值 ${DEFAULT_CONFIG[key]}。`);
+    }
   }
 
   if (record.qrDir !== undefined) {

@@ -32,6 +32,11 @@ test("Pi 实际资源加载器能在隔离 agent 目录里加载本包，且不�
     // 评论开关必须真的注册成命令，否则用户没有任何办法改 autoComment
     // （改配置文件也行，但那要求他知道这个键存在）。
     assert.ok(extension.commands.has("bili-comment"));
+    assert.ok(extension.commands.has("bili-voice"));
+    // 说话方式必须是"代码算 + 模型只写文字"两个工具都在，缺一个闭环就断：
+    // 没有 reflect 就拿不到自述；没有 status 就无法事后核对数值来源。
+    assert.ok(extension.tools.has("bili_voice_reflect"));
+    assert.ok(extension.tools.has("bili_voice_status"));
     assert.ok(extension.tools.has("bili_scroll_status"));
     // 状态工具必须声明为只读 —— 它是被模型调用的，不能有写副作用。
     assert.equal(
