@@ -122,6 +122,8 @@ export async function resolveAid(bvid: string, cookie: string): Promise<number> 
 export interface SendCommentResult {
   ok: boolean;
   rpid?: number;
+  /** 评论所属的 aid（复核公开可见性时要用） */
+  aid?: number;
   /** 服务端记录下来的被提及用户（真 @ 生效时非空） */
   members?: Array<{ mid?: string; uname?: string }>;
   error?: string;
@@ -165,6 +167,67 @@ export async function sendComment(input: {
   return {
     ok: true,
     rpid: parsed.data?.rpid,
+    aid,
     members: parsed.data?.reply?.content?.members ?? [],
+  };
+}
+
+/**
+ * 复核一条评论到底有没有**公开**出去。
+ *
+ * 为什么必须复核：B站 会“假成功”——`reply/add` 回 `code=0`、评论真的入库、
+ * 登录态也能看到，但匿名视角查不到，`state` 不是 0（实测 17）。
+ * 只看接口返回就宣布“已评论”，等于报了一个没发生的事。
+ *
+ * 两个视角一起看才有结论：
+ *   匿名✓ + 登录态✓ → 真公开
+ *   匿名✗ + 登录态✓ → 仅自己可见 / 审核中
+ *   匿名✗ + 登录态✗ → 真的不存在
+ */
+export interface CommentVisibility {
+  /** 匿名（不持任何 Cookie）能不能查到 */
+  anonymousVisible: boolean;
+  /** 带上自己的登录态能不能查到 */
+  loggedInVisible: boolean;
+  /** B站 的 state：0=公开；17=仅自己可见/审核中 */
+  state: number | null;
+  /** 结论：真的对外公开了吗 */
+  public: boolean;
+}
+
+export async function checkCommentVisibility(input: {
+  aid: number;
+  rpid: number;
+  cookie: string;
+}): Promise<CommentVisibility> {
+  const url = `https://api.bilibili.com/x/v2/reply/reply?type=1&oid=${input.aid}&root=${input.rpid}&pn=1&ps=20`;
+  const fetchJson = async (cookie?: string) => {
+    const headers: Record<string, string> = { "user-agent": UA, referer: REFERER };
+    if (cookie) headers.cookie = cookie;
+    try {
+      const res = await fetch(url, { headers });
+      return (await res.json().catch(() => ({}))) as { code?: number; data?: { root?: { state?: number } } };
+    } catch {
+      try {
+        const args = ["-sS", "-m", "20", "-A", UA, "-H", `Referer: ${REFERER}`];
+        if (cookie) args.push("-H", `Cookie: ${cookie}`);
+        const { stdout } = await run("curl", [...args, url]);
+        return JSON.parse(stdout) as { code?: number; data?: { root?: { state?: number } } };
+      } catch {
+        return {};
+      }
+    }
+  };
+
+  const anon = await fetchJson();
+  const mine = await fetchJson(input.cookie);
+  const anonymousVisible = anon.code === 0 && Boolean(anon.data?.root);
+  const loggedInVisible = mine.code === 0 && Boolean(mine.data?.root);
+  const state = typeof mine.data?.root?.state === "number" ? mine.data.root.state : null;
+  return {
+    anonymousVisible,
+    loggedInVisible,
+    state,
+    public: anonymousVisible && loggedInVisible,
   };
 }

@@ -26,6 +26,12 @@ export interface VoiceEntry {
   at: string;
   bvid: string;
   text: string;
+  /** B站 的评论 id（发了才有；用来复核“到底公开没有”） */
+  rpid?: number;
+  /** 匿名视角是否真能看到。false = 仅自己可见/审核中（B站 会假成功） */
+  public?: boolean;
+  /** B站 的 state：0=公开；17=仅自己可见/审核中 */
+  state?: number;
 }
 
 export interface VoiceStats {

@@ -36,7 +36,7 @@ import {
   writeCredential,
   type QrSession,
 } from "./login.js";
-import { sendComment, type MentionTarget } from "./comment.js";
+import { sendComment, checkCommentVisibility, buildCookie, type MentionTarget } from "./comment.js";
 import { readPersona } from "./persona.js";
 import { checkQuota, loadQuota, pruneState, quotaPath, recordComment, saveQuota } from "./quota.js";
 import { classifyRead, checkRead, settleRead, EMPTY_COUNTER, DEFAULT_READ_LIMITS, type ReadCounter, type ReadKind } from "./readlimit.js";
@@ -575,10 +575,33 @@ export default function (pi: ExtensionAPI) {
         text: params.text,
         at,
       });
+
+      // ⚠️ `code=0` 不等于“发出去了”。B站 会假成功：评论真的入库、登录态可见，
+      // 但匿名查不到、state≠0（实测 17）。不复核就报“已评论”= 报一件没发生的事。
+      const visibility =
+        result.ok && result.rpid && result.aid
+          ? await checkCommentVisibility({
+              aid: result.aid,
+              rpid: result.rpid,
+              cookie: buildCookie({
+                sessdata: credential.sessdata,
+                bili_jct: credential.bili_jct,
+                dedeuserid: credential.dedeuserid,
+              }),
+            })
+          : null;
+
       if (result.ok) {
         await saveQuota(quotaFile, recordComment(state, params.bvid, now));
         // 只有真发出去的才进语料 —— 说话方式的统计必须基于“别人真的看到过的话”。
-        await appendVoice(pathsFor().home, { at: now.toISOString(), bvid: params.bvid, text: params.text });
+        await appendVoice(pathsFor().home, {
+          at: now.toISOString(),
+          bvid: params.bvid,
+          text: params.text,
+          rpid: result.rpid,
+          public: visibility?.public,
+          state: visibility?.state ?? undefined,
+        });
       }
       // 和口味一样：攒够 N 条提醒做一次自述反思（数值不靠反思，靠代码算）。
       const allVoice = await readVoice(pathsFor().home);
@@ -586,6 +609,16 @@ export default function (pi: ExtensionAPI) {
       return jsonResult({
         ...result,
         at,
+        visibility,
+        ...(visibility && !visibility.public
+          ? {
+              public: false,
+              warning:
+                "接口返回成功，但匿名视角查不到（state=" +
+                String(visibility.state) +
+                "）—— 属于“仅自己可见/审核中”，**不算真的发出去了**。日报里必须如实写“已发但未公开”，不要写“已评论”。",
+            }
+          : {}),
         remainingToday: Math.max(0, (decision.remainingToday ?? 1) - 1),
         needReflect,
         ...(needReflect
