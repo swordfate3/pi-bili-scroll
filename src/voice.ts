@@ -46,6 +46,10 @@ export interface VoiceStats {
   colloquialRate: number;
   /** 带问号的条数占比 */
   questionRate: number;
+  /** 分号总数（书面味的硬指标：一句话里塞两个判断） */
+  semicolons: number;
+  /** 每条平均分号数 */
+  avgSemicolons: number;
   /** 命中的套话及次数 */
   bannedHits: { phrase: string; count: number }[];
   avgSentences: number;
@@ -213,6 +217,8 @@ export function computeVoiceStats(entries: VoiceEntry[], window = 10): VoiceStat
     concreteRate: 0,
     colloquialRate: 0,
     questionRate: 0,
+    semicolons: 0,
+    avgSemicolons: 0,
     bannedHits: [],
     avgSentences: 0,
   };
@@ -240,6 +246,12 @@ export function computeVoiceStats(entries: VoiceEntry[], window = 10): VoiceStat
   const concrete = recent.filter((entry) => isConcrete(entry.text)).length;
   const colloquial = recent.filter((entry) => isColloquial(entry.text)).length;
   const questions = recent.filter((entry) => /[?？]/.test(entry.text)).length;
+  // 分号 = 一句话里塞两个及以上判断，是书面/汇报体最稳定的信号。
+  // 口语里几乎不会这么断句 —— 人说话是短句接短句，不是分号对偻。
+  const semicolons = recent.reduce(
+    (sum, entry) => sum + (entry.text.match(/[\uFF1B;]/g)?.length ?? 0),
+    0,
+  );
   const sentences = recent.reduce((sum, entry) => sum + sentenceCountOf(entry.text), 0);
 
   return {
@@ -256,6 +268,8 @@ export function computeVoiceStats(entries: VoiceEntry[], window = 10): VoiceStat
     concreteRate: concrete / recent.length,
     colloquialRate: colloquial / recent.length,
     questionRate: questions / recent.length,
+    semicolons,
+    avgSemicolons: Number((semicolons / recent.length).toFixed(2)),
     bannedHits: [...bannedCounts.entries()]
       .sort((a, b) => b[1] - a[1])
       .map(([phrase, count]) => ({ phrase, count })),
@@ -469,6 +483,19 @@ export function buildVoiceBlock(
   }
 
   const problems: string[] = [];
+  // ⚠️ 长度规则必须独立于最小样本门槛。验收时擒过：两条评论 87 字、153 字，
+  //    而其它指标都刚好达标，于是块里输出了“这几项都还行，保持”——
+  //    系统在给明显的问题背书。长度不需要样本量就能判断。
+  if (stats.avgChars > 60) {
+    problems.push(
+      `平均 ${stats.avgChars} 字太长：目标 30–60 字。超过 60 字的部分往往是在把日报搬进评论区`,
+    );
+  }
+  if (stats.window >= 2 && stats.avgSemicolons >= 0.5) {
+    problems.push(
+      `平均每条 ${stats.avgSemicolons} 个分号：分号是在一句话里塞两个判断，口头上不会这么说话。拆成两句。`,
+    );
+  }
   if (stats.spread < 8 && stats.window >= 3) {
     problems.push(
       `长度几乎不变（起伏只有 ${stats.spread}）：每条都一个模子会显得是套模板，该长就长、该短就短`,
@@ -504,7 +531,6 @@ export function buildVoiceBlock(
   } else {
     lines.push("", "这几项都还行，保持：长度有起伏、有具体信息、有口语词。别为了「更丰富」而拉长。");
   }
-
   const reflections = (options.reflections ?? []).slice(-maxReflections);
   if (reflections.length > 0) {
     lines.push("", "## 你之前的反思（你自己写的，对照着看有没有做到）", "");

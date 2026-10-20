@@ -287,3 +287,42 @@ test("样本不足时即使有数值也不展示（避免两条评论就定型�
   assert.ok(!block.includes("你的说话风格"), "2 条 < 门槛 5，不该给出风格分数");
   assert.ok(block.includes("这一轮要改的"), "但具体问题仍应指出");
 });
+
+// ── 验收回归：系统不能替问题背书 ─────────────────────────────────────────────
+// 真实验收时两条评论 87 字、153 字、还在用分号塞判断，而统计块却输出
+// "这几项都还行，保持" —— 因为长度根本没有规则，其它指标又刚好过线。
+// 这两条测试就是钉住那个洞。
+
+test("平均超过 60 字必须报太长，并给出目标区间", () => {
+  const long = computeVoiceStats(many([
+    "同一 DeepSeek V4 Pro 做 3D 看房，字幕里报了 DeepSeek Harness 2.0 元、Codex 7.26 元，也对照了成品差异；这个成本与效果并列的比较挺具体。不过前面又采用各家自家最强模型，评论里也有人指出模型不统一，横向结论更适合看成这组任务的体验记录，不宜直接当产品排名。",
+    "字幕里把启动、冷加载和界面资源三类数据分开统计，还特别注明“三种数各测各的，不相加”；这个口径说明很关键。第三方 26 个条目逐项列出、官方组件折成一行，也让清理范围更清楚。",
+  ]));
+  const block = buildVoiceBlock(long) ?? "";
+  assert.ok(long.avgChars > 60);
+  assert.ok(block.includes("字太长"), "超长必须报，不能因为其它指标过了就说'都还行'");
+  assert.ok(block.includes("30–60 字"), "要给出可执行的目标长度");
+  assert.ok(!block.includes("这几项都还行"), "有问题时绝不能输出'都还行'");
+});
+
+test("分号密度高时点出书面味（口头上不会这么断句）", () => {
+  const stiff = computeVoiceStats(many([
+    "这个方法有道理；不过数据来源存疑。",
+    "结论可以看；排名不必当真。",
+  ]));
+  assert.equal(stiff.semicolons, 2);
+  assert.equal(stiff.avgSemicolons, 1);
+  const block = buildVoiceBlock(stiff) ?? "";
+  assert.ok(block.includes("分号"), "分号是书面体最稳定的信号，要点出来");
+});
+
+test("真正短而具体时才允许说'保持'", () => {
+  const good = computeVoiceStats(many([
+    "第 8 分钟说反了，其实 32KB 那个上限是 64KB。",
+    "26 个条目里有两个重复算了两遍。",
+  ]));
+  const block = buildVoiceBlock(good) ?? "";
+  assert.ok(good.avgChars <= 60);
+  assert.ok(good.avgSemicolons < 0.5);
+  assert.ok(block.includes("这几项都还行"), "确实达标才说保持");
+});
