@@ -29,6 +29,9 @@ test("Pi 实际资源加载器能在隔离 agent 目录里加载本包，且不�
 
     const extension = loaded.extensions[0];
     assert.ok(extension.commands.has("bili-scroll"));
+    // 评论开关必须真的注册成命令，否则用户没有任何办法改 autoComment
+    // （改配置文件也行，但那要求他知道这个键存在）。
+    assert.ok(extension.commands.has("bili-comment"));
     assert.ok(extension.tools.has("bili_scroll_status"));
     // 状态工具必须声明为只读 —— 它是被模型调用的，不能有写副作用。
     assert.equal(
@@ -128,6 +131,7 @@ test("走包清单发现路径（packages）时，扩展与 skill 都被认到",
     assert.deepEqual(loaded.errors, []);
     assert.equal(loaded.extensions.length, 1);
     assert.ok(loaded.extensions[0].commands.has("bili-scroll"));
+    assert.ok(loaded.extensions[0].commands.has("bili-comment"));
     assert.ok(loaded.extensions[0].tools.has("bili_scroll_status"));
 
     // pi.skills 指向的目录里必须真的有一个可发现的章程 skill。
