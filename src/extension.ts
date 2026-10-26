@@ -5,7 +5,7 @@
  * **不在工厂里做任何 IO / 起进程 / 定时器**（Pi 有些调用只加载扩展而不开会话），
  * 也不持有需要清理的长期资源 —— 配置与资料都是按需读，读完即弃。
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { dirname as pathDirname } from "node:path";
@@ -1209,6 +1209,48 @@ export default function (pi: ExtensionAPI) {
     if (!kind) return;
     pendingReads.delete(id);
     readCounter = settleRead(readCounter, kind, !event.isError);
+  });
+
+  pi.registerCommand("bili-install", {
+    description:
+      "一键装好 bili 扩展的运行时（Node 依赖 + whale 凭证软链 + 写 MCP 的 venv）。加 --check 只检查不安装。",
+    async handler(args: string, ctx: ExtensionCommandContext) {
+      const checkOnly = args.includes("--check");
+      say(ctx, checkOnly ? "检查中…" : "安装中…（npm install / venv 可能要几分钟）");
+      const r = spawnSync(
+        process.execPath,
+        [join(PACKAGE_ROOT_HINT, "scripts", "install.mjs"), ...(checkOnly ? ["--check"] : [])],
+        { encoding: "utf8", timeout: 600_000, cwd: PACKAGE_ROOT_HINT },
+      );
+      const out = `${r.stdout || ""}${r.stderr || ""}`.trim();
+      say(ctx, out || "（无输出）", r.status === 0 ? "info" : "error");
+    },
+  });
+
+  pi.registerCommand("bili-uninstall", {
+    description:
+      "一键清理 bili 扩展：取消加载 + 删除运行时/凭证/缓存。加 --yes 跳过确认，--keep-data 保留日报，--keep-login 保留登录。",
+    async handler(args: string, ctx: ExtensionCommandContext) {
+      const raw = args.trim();
+      const yes = raw.includes("--yes");
+      if (!yes) {
+        const ok = await ctx.ui.confirm(
+          "卸载 bili 扩展？",
+          "会取消加载，并删除运行时（约 600MB）和 B 站登录凭证。\n" +
+            "想保留数据加 --keep-data，想保留登录加 --keep-login。",
+        );
+        if (!ok) return;
+      }
+      const extra = raw.split(/\s+/).filter((a) => a.startsWith("--") && a !== "--yes");
+      const r = spawnSync(
+        process.execPath,
+        [join(PACKAGE_ROOT_HINT, "scripts", "uninstall.mjs"), "--yes", ...extra],
+        { encoding: "utf8", timeout: 600_000, cwd: PACKAGE_ROOT_HINT },
+      );
+      const out = `${r.stdout || ""}${r.stderr || ""}`.trim();
+      say(ctx, out || "（无输出）", r.status === 0 ? "info" : "error");
+      say(ctx, "重启 Pi 后扩展/技能/MCP 才彻底不再加载。", "warning");
+    },
   });
 
   pi.on("session_start", async (_event, ctx) => {
